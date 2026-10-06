@@ -1,0 +1,6 @@
+# 核心依赖（零重模型，开箱即用）
+fastapi>=0.110
+uvicorn>=0.27
+httpx>=0.27
+numpy>=1.24
+scikit-learn>=1.3

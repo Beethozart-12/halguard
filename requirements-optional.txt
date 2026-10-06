@@ -1,0 +1,4 @@
+# 可选：更高质量的语义嵌入与向量库（显著提升接地/验证效果）
+# 安装： pip install -r requirements-optional.txt
+sentence-transformers>=2.3
+faiss-cpu>=1.7

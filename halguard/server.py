@@ -88,6 +88,14 @@ async def _extract_claims_llm(client, cfg, text, payload_template) -> List[str]:
 
 def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
     app = FastAPI(title="HalGuard - 本地 LLM 抗幻觉中间件", version="0.1.0")
+    # 允许浏览器页面（file:// 或其它本地端口）直接调用本服务，便于本地聊天客户端使用
+    from fastapi.middleware.cors import CORSMiddleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     _log: List[Dict] = []
     _lock = threading.Lock()
 

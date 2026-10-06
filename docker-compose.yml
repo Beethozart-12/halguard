@@ -7,7 +7,7 @@ services:
     volumes:
       - ./knowledge:/app/knowledge:ro          # 知识库（改完重启容器即生效重建索引）
       - halguard_index:/data                   # 检索索引持久化（重建容器不丢）
-      - ./halguard_models:/models:ro           # 本地嵌入模型（避免运行时联网下载）
+      - ${HALGUARD_MODELS_DIR:-./halguard_models}:/models:ro   # 本地嵌入模型（模型目录可用 .env 指定，如 ../halguard_models）
     environment:
       # 默认指向宿主机 Ollama；如启用下方 ollama 服务，请改为 http://ollama:11434/v1
       HALGUARD_BACKEND_BASE_URL: ${HALGUARD_BACKEND_BASE_URL:-http://host.docker.internal:11434/v1}

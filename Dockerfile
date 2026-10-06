@@ -9,9 +9,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # 先装包（利用 Docker 层缓存：代码不变就不重装依赖）
+# 使用清华 PyPI 镜像加速国内构建（海外网络构建可换回官方源）
 COPY pyproject.toml README.md ./
 COPY halguard ./halguard
-RUN pip install --no-cache-dir ".[quality]"
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple ".[quality]"
 
 # 知识库默认目录（运行时可用卷覆盖）
 COPY knowledge ./knowledge

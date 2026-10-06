@@ -151,5 +151,55 @@ def test_websearch_config_env(monkeypatch):
     assert HalGuardConfig.load().websearch_enabled is False
 
 
+def test_websearch_empty_content_retries_with_bigger_budget(retrieval, backend_captured, monkeypatch):
+    """思考模型预算耗尽（content 空、reasoning 非空）时，服务端应双倍预算重试并取回正文。"""
+    monkeypatch.setattr(S, "_web_search", lambda q, **kw: FAKE_RESULTS)
+    calls = []
+
+    async def fake_backend(client, cfg, payload):
+        calls.append(dict(payload))
+        if len(calls) == 1:
+            return {"choices": [{"message": {"role": "assistant", "content": "", "reasoning": "我想想……"}}]}
+        return {"choices": [{"message": {"role": "assistant", "content": "根据搜索结果，埃菲尔铁塔高约330米[1]。"}}]}
+
+    monkeypatch.setattr(S, "_call_backend", fake_backend)
+    client = _make_client(retrieval, backend_captured, websearch_min_max_tokens=4096)
+    r = client.post(
+        "/v1/chat/completions",
+        json={"model": "mock", "messages": [{"role": "user", "content": "埃菲尔铁塔多高？"}],
+              "max_tokens": 500, "websearch": True},
+    )
+    assert r.status_code == 200, r.text
+    data = r.json()
+    assert data["choices"][0]["message"]["content"].strip(), "重试后应拿到正文"
+    # 1) 首次调用即被抬到预算下限（请求里只给了 500）
+    assert calls[0]["max_tokens"] == 4096
+    # 2) 重试调用预算翻倍
+    assert len(calls) == 2 and calls[1]["max_tokens"] == 4096 * 2
+
+
+def test_websearch_budget_floor_applied(retrieval, backend_captured, monkeypatch):
+    """联网模式下 max_tokens 低于下限会被抬高；关闭开关则不动。"""
+    monkeypatch.setattr(S, "_web_search", lambda q, **kw: FAKE_RESULTS)
+    calls = []
+
+    async def fake_backend(client, cfg, payload):
+        calls.append(dict(payload))
+        return {"choices": [{"message": {"role": "assistant", "content": "好的。"}}]}
+
+    monkeypatch.setattr(S, "_call_backend", fake_backend)
+    client = _make_client(retrieval, backend_captured, websearch_min_max_tokens=4096)
+    # 开关开：预算被抬高
+    client.post("/v1/chat/completions",
+                json={"model": "mock", "messages": [{"role": "user", "content": "问题"}],
+                      "max_tokens": 128, "websearch": True})
+    assert calls[-1]["max_tokens"] == 4096
+    # 开关关：尊重调用方给的 max_tokens
+    client.post("/v1/chat/completions",
+                json={"model": "mock", "messages": [{"role": "user", "content": "问题"}],
+                      "max_tokens": 128, "websearch": False})
+    assert calls[-1]["max_tokens"] == 128
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

@@ -40,6 +40,9 @@ class HalGuardConfig:
     websearch_enabled: bool = False
     websearch_max_results: int = 5   # 每次搜索注入的网页结果数
     websearch_timeout: float = 10.0  # 单次搜索超时（秒）
+    # 联网模式下 max_tokens 下限：思考模型（qwen3 等）的推理会消耗 token 预算，
+    # 上下文变长后推理更长，预算不足会导致"正文为空、只有 reasoning"。
+    websearch_min_max_tokens: int = 4096
 
     # ---- 路径 ----
     kb_path: str = "./knowledge"
@@ -72,6 +75,7 @@ class HalGuardConfig:
             "WEBSEARCH": "websearch_enabled",
             "WEBSEARCH_MAX_RESULTS": "websearch_max_results",
             "WEBSEARCH_TIMEOUT": "websearch_timeout",
+            "WEBSEARCH_MIN_MAX_TOKENS": "websearch_min_max_tokens",
             "KB_PATH": "kb_path",
             "INDEX_PATH": "index_path",
         }

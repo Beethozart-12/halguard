@@ -137,6 +137,7 @@ HalGuard 是常驻代理，最可靠的做法是与本地 LLM 一起启动。任
 | `websearch_enabled` | `false` | **联网搜索开关**：开启后每次提问先搜索网页，并强制模型仅依据搜索结果作答（环境变量 `HALGUARD_WEBSEARCH=1`；请求体传 `"websearch": true/false` 可按次覆盖）|
 | `websearch_max_results` | `5` | 每次搜索注入的网页结果数（`HALGUARD_WEBSEARCH_MAX_RESULTS`）|
 | `websearch_timeout` | `10.0` | 单次搜索超时秒数（`HALGUARD_WEBSEARCH_TIMEOUT`）|
+| `websearch_min_max_tokens` | `4096` | 联网模式 `max_tokens` 下限：思考模型推理会耗尽小预算导致**空正文**，服务端会自动抬高预算，并在"正文空但有推理内容"时**双倍预算重试一次** |
 
 ### 联网搜索模式（强制接地）
 
@@ -157,8 +158,10 @@ curl http://localhost:8849/v1/chat/completions -H "Content-Type: application/jso
 
 内置网页客户端 `chat.html` 顶栏已有「🌐 联网搜索」开关，回答下方会显示搜索来源列表。
 
-> **思考模型提示**：qwen3 等思考模型的推理会消耗 token 预算，联网模式上下文更长，
-> 建议 `max_tokens >= 3000`，否则预算被推理耗尽会返回空正文（`chat.html` 已自动处理）。
+> **思考模型提示**：qwen3 等思考模型的推理会消耗 token 预算，联网模式上下文更长。
+> HalGuard 服务端已内置兜底：联网模式自动把 `max_tokens` 抬到
+> `websearch_min_max_tokens`（默认 4096），若仍出现"正文空、只有推理内容"会**自动双倍预算重试一次**——
+> 因此即使客户端传了很小的 `max_tokens`，联网模式下模型也能正常回答。
 
 ## 局限与说明
 

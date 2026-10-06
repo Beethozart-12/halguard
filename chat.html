@@ -185,9 +185,9 @@ async function send() {
     const r = await fetch(base + '/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
-      // 联网模式注入搜索结果后，思考模型（qwen3 等）推理更长，需更大 token 预算，
-      // 否则预算被 <think> 耗尽导致正文为空
-      body: JSON.stringify({ model, messages: history, stream: false, max_tokens: wsOn ? 3000 : 1500, websearch: wsOn }),
+      // 联网模式：服务端会保证 max_tokens 下限（4096）并在思考耗尽预算时自动重试；
+      // 客户端预算也给足，避免思考模型（qwen3 等）推理耗尽预算导致正文为空
+      body: JSON.stringify({ model, messages: history, stream: false, max_tokens: wsOn ? 4000 : 1500, websearch: wsOn }),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
     const d = await r.json();

@@ -79,6 +79,32 @@ def _inject_context(messages: List[Dict], context_block: str) -> List[Dict]:
     return out
 
 
+def _ensure_budget(payload: Dict, floor: int) -> None:
+    """联网模式下保证 max_tokens 下限（就地修改）。
+
+    思考模型（qwen3 等）的推理消耗 token 预算；注入搜索结果后上下文更长、
+    推理更长，预算不足会返回空正文（content='' 而 reasoning 非空）。
+    """
+    cur = payload.get("max_tokens")
+    if not isinstance(cur, int) or cur < floor:
+        payload["max_tokens"] = floor
+
+
+async def _call_backend_with_retry(client, cfg: HalGuardConfig, payload: Dict) -> Dict:
+    """调用后端；若正文为空但 reasoning 非空（思考耗尽预算），双倍预算重试一次。"""
+    data = await _call_backend(client, cfg, payload)
+    msg = data.get("choices", [{}])[0].get("message", {}) or {}
+    content = msg.get("content") or ""
+    if content.strip() or not (msg.get("reasoning") or "").strip():
+        return data
+    retry = dict(payload)
+    retry["max_tokens"] = max(int(payload.get("max_tokens") or 2048), 2048) * 2
+    try:
+        return await _call_backend(client, cfg, retry)
+    except Exception:
+        return data  # 重试失败则返回原响应，由上层兜底
+
+
 async def _call_backend(client: httpx.AsyncClient, cfg: HalGuardConfig, payload: Dict) -> Dict:
     url = cfg.backend_base_url.rstrip("/") + "/chat/completions"
     headers = {
@@ -209,6 +235,8 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
         if payload.get("stream"):
             if context_block:
                 payload["messages"] = _inject_context(messages, context_block)
+            if ws_enabled:
+                _ensure_budget(payload, cfg.websearch_min_max_tokens)
             url = cfg.backend_base_url.rstrip("/") + "/chat/completions"
             headers = {
                 "Authorization": f"Bearer {cfg.backend_api_key}",
@@ -223,11 +251,13 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
         fwd.pop("websearch", None)  # 不把开关字段透传给后端
         fwd["model"] = cfg.backend_model
         fwd["stream"] = False
+        if ws_enabled:
+            _ensure_budget(fwd, cfg.websearch_min_max_tokens)
         if context_block:
             fwd["messages"] = _inject_context(messages, context_block)
 
-        async with httpx.AsyncClient(timeout=180.0) as client:
-            data = await _call_backend(client, cfg, fwd)
+        async with httpx.AsyncClient(timeout=300.0) as client:
+            data = await _call_backend_with_retry(client, cfg, fwd)
             content = data["choices"][0]["message"]["content"]
 
             # 仅在存在可对照上下文时才验证

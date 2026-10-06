@@ -99,6 +99,106 @@ def test_content_units_cjk_and_latin():
 # ---- 搜索编排与回退 ----
 
 
+# ---- 360 新闻（时效性源，时间排序） ----
+
+NEWS_HTML = """
+<html><body>
+<li class="full-txt res-list pure-txt" data-url="https://www.360kuai.com/pc/1">
+<a href="https://www.360kuai.com/pc/1" target="_blank" title="今天全世界都在看的新闻2026.10.7">
+<h3 class="g-title js-title"><div class="g-title-inner"><div class="g-txt-inner g-ellipsis">今天全世界都在看的<em>新闻</em></div></div></h3>
+<div class="g-figure-caption"><p class="summary g-ellipsis3">各大媒体报道最新国际动态。</p>
+<p class="g-linkinfo info b-info"><span class="g-linkinfo-txt g-c-gray time">8小时前</span></p></div></a></li>
+<li class="res-list" data-url="https://example.com/ai-news">
+<a href="https://example.com/ai-news" title="AI领域新闻动态">
+<h3 class="g-title js-title"><div class="g-txt-inner">AI领域新闻动态</div></h3>
+<p class="summary">最新模型发布。</p>
+<span class="g-linkinfo-txt g-c-gray time">2026-10-06 21:00</span></a></li>
+</body></html>
+"""
+
+
+def test_parse_so360_news_html_extracts_results_with_time():
+    out = W.parse_so360_news_html(NEWS_HTML, max_results=5)
+    assert len(out) == 2
+    assert out[0]["title"] == "今天全世界都在看的新闻2026.10.7"
+    assert out[0]["time"] == "8小时前"
+    assert out[1]["time"] == "2026-10-06 21:00"
+    assert "模型发布" in out[1]["snippet"]
+
+
+# ---- 时效性查询识别 ----
+
+def test_is_timely_query():
+    for q in ["今天有什么新闻", "最新 AI 新闻", "现在汇率多少", "qwen3 最新版本", "今天几号"]:
+        assert W.is_timely_query(q), q
+    for q in ["巴黎的首都是哪里", "埃菲尔铁塔是谁设计的", "帮我写一首诗"]:
+        assert not W.is_timely_query(q), q
+
+
+# ---- 新鲜度过滤（时效性查询剔除旧闻） ----
+
+def test_is_fresh_time():
+    F = W.is_fresh_time
+    assert F("8小时前") is True
+    assert F("30分钟前") is True
+    assert F("昨天 21:00") is True
+    assert F("2天前") is True
+    assert F("5天前") is False
+    assert F("2周前") is False
+    assert F("06:05") is True              # 纯时刻按今天处理
+    assert F("2020-01-01 13:31") is False  # 陈旧绝对日期
+    assert F("") is None                   # 未知不过滤
+    assert F("乱七八糟") is None
+
+
+def test_filter_fresh_removes_old_news_with_today_in_title():
+    """新闻池常见陷阱：标题含'今天'的旧闻必须被剔除。"""
+    results = [
+        {"title": "来自山东的女民兵今天受阅", "url": "https://x/1", "snippet": "", "time": "2025-09-03 13:31"},
+        {"title": "这才是今天世界最重要的新闻", "url": "https://x/2", "snippet": "", "time": "06:05"},
+    ]
+    out = W.filter_fresh(results)
+    assert len(out) == 1 and out[0]["url"] == "https://x/2"
+
+
+def test_filter_fresh_keeps_unknown_time():
+    results = [{"title": "无时间戳条目", "url": "https://x/1", "snippet": "", "time": ""}]
+    assert W.filter_fresh(results) == results
+
+
+def test_web_search_timely_prefers_news(monkeypatch):
+    """timely=True 时优先走 360 新闻（sort=time），并带回时间戳。"""
+    called = []
+
+    def fake_get(url, **kw):
+        called.append(str(url))
+        if "news.so.com" in url:
+            params = kw.get("params") or {}
+            assert params.get("sort") == "time", f"新闻源应按时间排序: {params}"
+            return httpx.Response(200, text=NEWS_HTML, request=httpx.Request("GET", url))
+        raise httpx.ConnectError("should not be called")
+
+    monkeypatch.setattr(W.httpx, "get", fake_get)
+    out = W.web_search("今天有什么新闻", max_results=3, timely=True)
+    assert out and out[0]["time"] == "8小时前"
+    assert "news.so.com" in called[0]  # 新闻源排第一
+
+
+def test_web_search_timely_falls_back_to_web(monkeypatch):
+    """新闻源失败时回退常规网页源。"""
+    def fake_get(url, **kw):
+        if "news.so.com" in url:
+            raise httpx.ConnectError("news down")
+        if "so.com" in url:
+            return httpx.Response(200, text=SO360_HTML, request=httpx.Request("GET", url))
+        raise httpx.ConnectError("blocked")
+
+    monkeypatch.setattr(W.httpx, "get", fake_get)
+    # 查询词需与 SO360_HTML 罐头结果相关（过相关性门控）；timely=True 强制走新闻优先调度
+    out = W.web_search("埃菲尔铁塔 高度", max_results=3, timely=True)
+    assert out and out[0]["url"] == "https://baike.so.com/doc/123.html"
+
+
 def test_web_search_falls_back_to_ddg(monkeypatch):
     """so360 与 Bing 均失败时回退 DuckDuckGo。"""
     def fake_get(url, **kw):

@@ -201,5 +201,55 @@ def test_websearch_budget_floor_applied(retrieval, backend_captured, monkeypatch
     assert calls[-1]["max_tokens"] == 128
 
 
+def test_websearch_timely_query_uses_news_and_date_anchor(retrieval, backend_captured, monkeypatch):
+    """时效性查询：应以 timely=True 调搜索，接地块含今天日期与时效指令，来源带发布时间。"""
+    captured_kwargs = {}
+
+    def fake_search(q, **kw):
+        captured_kwargs.update(kw)
+        return [
+            {"title": "今日国际要闻", "url": "https://example.com/news1",
+             "snippet": "最新报道：多国领导人会晤。", "time": "3小时前"},
+        ]
+
+    monkeypatch.setattr(S, "_web_search", fake_search)
+    backend_captured.clear()
+    client = _make_client(retrieval, backend_captured)
+    r = client.post(
+        "/v1/chat/completions",
+        json={"model": "mock", "messages": [{"role": "user", "content": "今天有什么新闻？"}], "websearch": True},
+    )
+    assert r.status_code == 200, r.text
+    assert captured_kwargs.get("timely") is True, "时效性查询应以 timely=True 调用搜索"
+    sys_msgs = [m for m in backend_captured[0]["messages"] if m.get("role") == "system"]
+    assert sys_msgs, "未注入 system 消息"
+    content = sys_msgs[0]["content"]
+    assert "今天是" in content and "年" in content, "接地块应包含当前日期锚点"
+    assert "发布日期较新" in content, "时效性指令缺失"
+    assert "发布时间: 3小时前" in content, "搜索结果应携带发布时间"
+    ws = r.json()["halguard"]["websearch"]
+    assert ws["timely"] is True and ws["sources"][0]["time"] == "3小时前"
+
+
+def test_websearch_nontimely_query_no_news(retrieval, backend_captured, monkeypatch):
+    """非时效性查询 timely=False（走普通网页源，无日期强制指令）。"""
+    captured_kwargs = {}
+
+    def fake_search(q, **kw):
+        captured_kwargs.update(kw)
+        return [{"title": "埃菲尔铁塔 - 维基百科", "url": "https://example.com/e", "snippet": "1889年建成。"}]
+
+    monkeypatch.setattr(S, "_web_search", fake_search)
+    backend_captured.clear()
+    client = _make_client(retrieval, backend_captured)
+    client.post(
+        "/v1/chat/completions",
+        json={"model": "mock", "messages": [{"role": "user", "content": "埃菲尔铁塔是谁设计的？"}], "websearch": True},
+    )
+    assert captured_kwargs.get("timely") is False
+    sys_msgs = [m for m in backend_captured[0]["messages"] if m.get("role") == "system"]
+    assert sys_msgs and "发布日期较新" not in sys_msgs[0]["content"]
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-v"]))

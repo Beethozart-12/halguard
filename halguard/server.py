@@ -24,7 +24,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from .config import HalGuardConfig
 from .retrieval import RetrievalIndex
 from . import verify as V
-from .websearch import web_search as _web_search
+from .websearch import web_search as _web_search, is_timely_query as _is_timely_query
 
 
 def _last_user_message(messages: List[Dict]) -> str:
@@ -48,22 +48,41 @@ def _build_context_block(chunks: List[str]) -> Optional[str]:
     )
 
 
-def _build_websearch_block(chunks: List[str]) -> str:
+def _now_cst() -> "Any":
+    """当前北京时间（东八区）。固定偏移不依赖系统时区——Docker 容器默认 UTC，
+    否则日期锚点会慢 8 小时（实测踩坑）。"""
+    import datetime
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+
+
+def _current_date_anchor() -> str:
+    """当前日期锚点：本地 LLM 通常不知道今天是几号，时效性回答必须有这个锚点。"""
+    now = _now_cst()
+    weekdays = "一二三四五六日"
+    return f"今天是 {now.year}年{now.month}月{now.day}日 星期{weekdays[now.weekday()]}"
+
+
+def _build_websearch_block(chunks: List[str], timely: bool = False) -> str:
     """联网搜索模式的强制接地块：模型必须只依据搜索结果作答。"""
     body = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(chunks))
-    return (
-        "【联网搜索模式已开启】你必须【仅依据】下面提供的[网络搜索结果]回答用户问题：\n"
-        "- 不得引入搜索结果之外的任何事实，即使你\"记得\"相关信息；\n"
-        "- 搜索结果未覆盖的问题，明确告知\"搜索结果中没有相关信息\"，不要编造；\n"
-        "- 对关键事实用来源编号（如 [1]）标注。\n\n"
-        "=== 网络搜索结果 ===\n" + body
-    )
+    lines = [
+        f"【联网搜索模式已开启】（{_current_date_anchor()}）你必须【仅依据】下面提供的[网络搜索结果]回答用户问题：",
+        "- 不得引入搜索结果之外的任何事实，即使你\"记得\"相关信息；",
+        "- 搜索结果未覆盖的问题，明确告知\"搜索结果中没有相关信息\"，不要编造；",
+        "- 对关键事实用来源编号（如 [1]）标注。",
+    ]
+    if timely:
+        lines.append("- 本次提问涉及时效性：优先采用发布日期较新的搜索结果，"
+                     "回答中注明信息的发布时间（如\"据 3 小时前的报道\"）；"
+                     "结果中没有近期信息时，明确说明未找到最新信息，不要用旧信息冒充。")
+    return "\n".join(lines) + "\n\n=== 网络搜索结果 ===\n" + body
 
 
 def _build_websearch_failed_block() -> str:
     """搜索失败时的诚实指令：禁止在无依据情况下编造最新信息。"""
     return (
-        "【联网搜索模式已开启，但本次网络搜索失败】你没有可依据的实时搜索结果。"
+        f"【联网搜索模式已开启】（{_current_date_anchor()}）但本次网络搜索失败，"
+        "你没有可依据的实时搜索结果。"
         "请如实告知用户当前无法联网获取信息；如果仅凭你已有的知识回答，必须明确声明"
         "\"以下内容未经联网核实\"，并且不要编造具体的数据、日期、价格等易变事实。"
     )
@@ -186,19 +205,26 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
         ws_sources: List[Dict] = []
         ws_chunks: List[str] = []
         ws_failed = False
+        ws_timely = ws_enabled and bool(_is_timely_query(query))
         if ws_enabled and query:
             try:
                 results = _web_search(
                     query,
                     max_results=cfg.websearch_max_results,
                     timeout=cfg.websearch_timeout,
+                    timely=ws_timely,
                 )
             except Exception:
                 results = []
             if results:
-                ws_sources = [{"title": r["title"], "url": r["url"]} for r in results]
+                ws_sources = [
+                    {"title": r["title"], "url": r["url"], "time": r.get("time", "")}
+                    for r in results
+                ]
                 ws_chunks = [
-                    f"{r['title']}。{r['snippet']}（来源: {r['url']}）" for r in results
+                    (f"{r['title']}。{r['snippet']}（来源: {r['url']}"
+                     + (f"，发布时间: {r['time']}" if r.get("time") else "") + "）")
+                    for r in results
                 ]
             else:
                 ws_failed = True
@@ -227,7 +253,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
         # 生成注入的 system 接地块（联网模式用强制块；搜索失败用诚实指令）
         context_block = None
         if ws_enabled:
-            context_block = _build_websearch_block(chunks) if chunks else _build_websearch_failed_block()
+            context_block = _build_websearch_block(chunks, timely=ws_timely) if chunks else _build_websearch_failed_block()
         elif chunks:
             context_block = _build_context_block(chunks)
 
@@ -316,6 +342,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "websearch": {
                 "enabled": ws_enabled,
                 "failed": ws_failed,
+                "timely": ws_timely,
                 "query": query,
                 "sources": ws_sources,
             },

@@ -71,6 +71,64 @@ def filter_relevant(query: str, results: List[Dict]) -> List[Dict]:
     return [r for r in results if is_relevant(query, f"{r.get('title', '')} {r.get('snippet', '')}")]
 
 
+# ---------------------------------------------------------------- 360 新闻（时效性） ----
+
+# news.so.com/ns?q=..&sort=time 按时间排序的新闻条目：
+# <li class="...res-list..." data-url="URL"><a href="URL" title="标题">...
+#   <div class="g-txt-inner">标题</div> ... <p class="summary ...">摘要</p>
+#   <span class="g-linkinfo-txt g-c-gray time">2025-09-03 13:31 / 8小时前</span>
+_NEWS_BLOCK_SPLIT = re.compile(r'<li[^>]*class="[^"]*\bres-list\b[^"]*"[^>]*>', re.I)
+_NEWS_URL_RE = re.compile(r'<a[^>]+href="(https?://[^"]+)"', re.I)
+_NEWS_TITLE_RE = re.compile(r'title="([^"]+)"', re.I)
+_NEWS_TITLE_ALT_RE = re.compile(r'<div class="g-txt-inner[^"]*">(.*?)</div>', re.S | re.I)
+_NEWS_SNIPPET_RE = re.compile(r'<p[^>]*class="[^"]*\bsummary\b[^"]*"[^>]*>(.*?)</p>', re.S | re.I)
+_NEWS_TIME_RE = re.compile(r'class="[^"]*\btime\b[^"]*">([^<]+)</span>', re.I)
+
+
+def parse_so360_news_html(html: str, max_results: int = 5) -> List[Dict]:
+    """解析 360 新闻搜索（时间排序）结果页 -> [{title, url, snippet, time}]（纯函数，可离线测试）。"""
+    out: List[Dict] = []
+    blocks = _NEWS_BLOCK_SPLIT.split(html)[1:]
+    for block in blocks:
+        m = _NEWS_URL_RE.search(block)
+        if not m:
+            continue
+        url = m.group(1)
+        tm = _NEWS_TITLE_RE.search(block)
+        if tm:
+            title = _strip(tm.group(1))
+        else:
+            ta = _NEWS_TITLE_ALT_RE.search(block)
+            title = _strip(ta.group(1)) if ta else ""
+        snip = ""
+        sm = _NEWS_SNIPPET_RE.search(block)
+        if sm:
+            snip = _strip(sm.group(1))
+        time_str = ""
+        tm2 = _NEWS_TIME_RE.search(block)
+        if tm2:
+            time_str = _strip(tm2.group(1))
+        if not title or not url.startswith("http"):
+            continue
+        out.append({"title": title, "url": url, "snippet": snip, "time": time_str})
+        if len(out) >= max_results:
+            break
+    return out
+
+
+def search_so360_news(query: str, max_results: int = 5, timeout: float = 10.0) -> List[Dict]:
+    """360 新闻垂直搜索，按时间排序（sort=time），返回最新新闻条目。"""
+    r = httpx.get(
+        "https://news.so.com/ns",
+        params={"q": query, "pn": "1", "sort": "time"},
+        headers={"User-Agent": USER_AGENT},
+        timeout=timeout,
+        follow_redirects=True,
+    )
+    r.raise_for_status()
+    return parse_so360_news_html(r.text, max_results)
+
+
 # ---------------------------------------------------------------- 360 搜索 ----
 
 # <li class="res-list"> 块内：<h3><a href="URL">标题</a></h3>，摘要在 <p class="res-desc">
@@ -209,25 +267,120 @@ def search_ddg(query: str, max_results: int = 5, timeout: float = 10.0) -> List[
 
 # ---------------------------------------------------------------- 入口 ----
 
-_SOURCES = ("so360", "bing", "ddg")
+# 时效性查询的启发式关键词：命中则优先走新闻垂直源（时间排序）
+TIMELY_KEYWORDS = (
+    "今天", "今日", "今天有", "最新", "最近", "现在", "当前", "今年", "本月", "昨天",
+    "刚刚", "新闻", "热搜", "实况", "实时", "天气", "气温", "汇率", "股价", "行情",
+    "比分", "发布了", "上线", "发布", "更新", "几号", "多少号", "几点", "价格",
+)
 
 
-def web_search(query: str, max_results: int = 5, timeout: float = 10.0) -> List[Dict]:
-    """执行联网搜索：so360 -> Bing -> DuckDuckGo 依次回退；全失败返回 []。
+def is_timely_query(query: str) -> bool:
+    """判断查询是否具有时效性（应优先返回最新信息）。"""
+    return any(k in query for k in TIMELY_KEYWORDS)
 
-    所有结果经过相关性门控（防 Bing 式反爬污染：HTTP 200 但结果无关）。
 
-    返回: [{"title": str, "url": str, "snippet": str}, ...]
+# ---- 新鲜度过滤：解析发布时间，剔除陈旧内容（新闻池里常见标题含"今天"的旧闻）----
+
+import datetime as _dt
+
+# 统一用东八区"现在"：容器环境默认 UTC，会让日期新鲜度判断慢 8 小时
+_CST = _dt.timezone(_dt.timedelta(hours=8))
+
+
+def _now() -> _dt.datetime:
+    return _dt.datetime.now(_CST).replace(tzinfo=None)
+
+
+def is_fresh_time(t: str, max_age_days: int = 3) -> bool | None:
+    """判断发布时间字符串是否在 max_age_days 天内。
+
+    返回 True（新鲜）/ False（陈旧）/ None（无法解析，不过滤）。
+    支持中文相对时间（"8小时前"/"3天前"/"昨天"）、绝对日期（"2026-10-07 13:31"）、
+    纯时刻（"06:05"，视为今天）与 "10-05"/"10月5日" 形式（按当年计算）。
+    """
+    if not t:
+        return None
+    t = t.strip()
+    now = _now()
+    m = re.search(r"(\d+)\s*分钟前", t)
+    if m:
+        return True
+    m = re.search(r"(\d+)\s*小时前", t)
+    if m:
+        return True
+    m = re.search(r"(\d+)\s*天前", t)
+    if m:
+        return int(m.group(1)) <= max_age_days
+    if "昨天" in t or "昨日" in t:
+        return max_age_days >= 1
+    if "前天" in t:
+        return max_age_days >= 2
+    m = re.search(r"(\d+)\s*周前", t)
+    if m:
+        return False  # 周级粒度默认超过 3 天
+    m = re.search(r"(\d{4})-(\d{1,2})-(\d{1,2})", t)
+    if m:
+        try:
+            d = _dt.datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            return (now - d).days <= max_age_days
+        except ValueError:
+            return None
+    if re.fullmatch(r"\d{1,2}:\d{2}", t):
+        return True  # 纯时刻（无日期）按今天发布处理
+    m = re.fullmatch(r"(\d{1,2})-(\d{1,2})", t)
+    if m:
+        try:
+            d = _dt.datetime(now.year, int(m.group(1)), int(m.group(2)))
+            return abs((now - d).days) <= max_age_days
+        except ValueError:
+            return None
+    m = re.search(r"(\d{1,2})月(\d{1,2})[日号]", t)
+    if m:
+        try:
+            d = _dt.datetime(now.year, int(m.group(1)), int(m.group(2)))
+            return abs((now - d).days) <= max_age_days
+        except ValueError:
+            return None
+    return None
+
+
+def filter_fresh(results: List[Dict], max_age_days: int = 3) -> List[Dict]:
+    """保留有发布时间且时间新鲜的条目；无法判断时间的条目保留；全被剔除则原样返回。"""
+    kept = [r for r in results if is_fresh_time(r.get("time", ""), max_age_days) is not False]
+    return kept if kept else results
+
+
+def web_search(query: str, max_results: int = 5, timeout: float = 10.0,
+               timely: bool = False) -> List[Dict]:
+    """执行联网搜索，所有结果经过相关性门控（防反爬污染）。
+
+    timely=True（时效性查询）：优先 360 新闻垂直源（按时间排序，条目带发布时间），
+    之后依次回退 360 网页 / Bing / DuckDuckGo；
+    timely=False：360 网页 -> Bing -> DuckDuckGo。
+    全失败返回 []。
+
+    返回: [{"title": str, "url": str, "snippet": str, "time": str(可选)}, ...]
     """
     if not query or not query.strip():
         return []
-    fns = {"so360": search_so360, "bing": search_bing, "ddg": search_ddg}
-    for name in _SOURCES:
+    order = ["so360_news", "so360", "bing", "ddg"] if timely else ["so360", "bing", "ddg"]
+    fns = {
+        "so360_news": search_so360_news,
+        "so360": search_so360,
+        "bing": search_bing,
+        "ddg": search_ddg,
+    }
+    for name in order:
         try:
-            results = fns[name](query, max_results, timeout)
+            # 时效模式多抓一倍再筛新鲜度，避免过滤后凑不满
+            results = fns[name](query, max_results * 2 if name == "so360_news" and timely else max_results, timeout)
         except Exception:
             continue
         relevant = filter_relevant(query, results)
-        if relevant:
-            return relevant[:max_results]
+        if not relevant:
+            continue
+        if name == "so360_news" and timely:
+            relevant = filter_fresh(relevant)
+        return relevant[:max_results]
     return []

@@ -143,7 +143,7 @@ function addHgPanel(el, hg) {
   if (srcs.length) {
     html += '<div class="claims"><b>🌐 搜索来源：</b><ul>' +
       srcs.slice(0, 5).map((s, i) =>
-        `<li><a href="${escapeHtml(s.url)}" target="_blank" style="color:var(--accent)">[${i + 1}] ${escapeHtml(s.title)}</a></li>`
+        `<li><a href="${escapeHtml(s.url)}" target="_blank" style="color:var(--accent)">[${i + 1}] ${escapeHtml(s.title)}</a>${s.time ? ` <span class="hint">(${escapeHtml(s.time)})</span>` : ''}</li>`
       ).join('') + '</ul></div>';
   }
   const bad = (hg.claims || []).filter(c => c.unsupported);

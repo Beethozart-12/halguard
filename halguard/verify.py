@@ -15,6 +15,38 @@ QUESTION_STARTERS = ("what", "who", "when", "where", "why", "how", "which", "is"
 # 明显非事实性（观点/语气）的弱信号词，命中且较短时倾向于跳过
 SOFT_FILLER = ("i think", "in my opinion", "maybe", "perhaps", "it seems", "generally", "usually")
 
+# ---- 混合验证（余弦 + 字符 bigram 重合度）----
+# 纯余弦相似度对"同主谓、仅换宾语"的近义矛盾（如"巴黎是德国/法国的首都"）区分度差，
+# 二者相似度可高达 0.8+。因此引入灰度区：相似度极高(>=COS_CLEAR)直接判支持、
+# 极低(<threshold)直接判不支持，中间模糊区再用字符 bigram 重合度二次判定，捕捉"引入新实体"。
+COS_CLEAR = 0.90
+LEX_SUPPORT = 0.70
+
+# 常见功能字（用于过滤无意义 bigram）
+STOPWORD_CHARS = set("的是了和与或也都就而及在把被个这那等有还更最着过将已，。！？、；：,.;:!?()（）")
+
+
+def content_units(text: str) -> set:
+    """抽取文本的内容单元：拉丁词 + 中日韩字符相邻 bigram（过滤含功能字的 bigram）。"""
+    units = set()
+    for w in re.findall(r"[A-Za-z0-9]+", text):
+        units.add(w.lower())
+    cjk = [c for c in text if "\u4e00" <= c <= "\u9fff"]
+    for i in range(len(cjk) - 1):
+        bg = cjk[i] + cjk[i + 1]
+        if not (set(bg) & STOPWORD_CHARS):
+            units.add(bg)
+    return units
+
+
+def lexical_ratio(claim: str, chunk: str) -> float:
+    """claim 的内容单元中有多少比例出现在 chunk 中（捕捉"引入上下文没有的实体"）。"""
+    cu = content_units(claim)
+    if not cu:
+        return 1.0
+    ku = content_units(chunk)
+    return sum(1 for u in cu if u in ku) / len(cu)
+
 
 def extract_claims(text: str) -> List[str]:
     """启发式抽取事实性断言（句子级）。"""
@@ -44,8 +76,16 @@ def extract_claims(text: str) -> List[str]:
     return claims
 
 
-def score_claims(claims: List[str], chunk_embeddings: np.ndarray, embedder, threshold: float) -> List[Dict]:
-    """为每条断言计算最大语义支持度，并判定是否不受支持。"""
+def score_claims(claims: List[str], chunk_embeddings: np.ndarray, embedder, threshold: float,
+                 chunk_texts: List[str] | None = None) -> List[Dict]:
+    """为每条断言计算语义支持度并判定是否不受支持（疑似幻觉）。
+
+    混合策略：
+      - 余弦相似度 >= COS_CLEAR          -> 直接判支持
+      - 余弦相似度 <  threshold          -> 直接判不支持（无依据）
+      - 中间灰度区(threshold~COS_CLEAR)  -> 再看字符 bigram 重合度，低于 LEX_SUPPORT 判不支持
+    仅当提供 chunk_texts 时才启用灰度区二次判定；否则退化为纯余弦（向后兼容）。
+    """
     results: List[Dict] = []
     if not claims:
         return results
@@ -67,8 +107,21 @@ def score_claims(claims: List[str], chunk_embeddings: np.ndarray, embedder, thre
 
     sims = M @ ce.T  # (n_chunks, n_claims)
     best = np.max(sims, axis=0)  # (n_claims,)
-    for c, b in zip(claims, best):
-        results.append({"claim": c, "support": round(float(b), 4), "unsupported": bool(b < threshold)})
+    best_idx = np.argmax(sims, axis=0)
+    use_lexical = chunk_texts is not None and len(chunk_texts) == M.shape[0]
+
+    for i, c in enumerate(claims):
+        b = float(best[i])
+        if use_lexical and threshold <= b < COS_CLEAR:
+            ratio = lexical_ratio(c, chunk_texts[int(best_idx[i])])
+            results.append({
+                "claim": c,
+                "support": round(b, 4),
+                "unsupported": bool(ratio < LEX_SUPPORT),
+                "lexical": round(ratio, 3),
+            })
+        else:
+            results.append({"claim": c, "support": round(b, 4), "unsupported": bool(b < threshold)})
     return results
 
 

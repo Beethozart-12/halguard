@@ -75,7 +75,7 @@ def cmd_verify(args):
         report = [{"claim": c, "support": 0.0, "unsupported": True} for c in claims]
     else:
         retr = _load_or_new_retrieval(cfg)
-        report = V.score_claims(claims, chunk_embs, retr.embedder, cfg.support_threshold)
+        report = V.score_claims(claims, chunk_embs, retr.embedder, cfg.support_threshold, chunk_texts=chunks)
     risk = V.compute_risk(report)
     print(f"断言数: {len(claims)}  整体风险: {risk:.2f}")
     for r in report:

@@ -5,4 +5,6 @@ build/
 dist/
 .halguard_index/
 .learnings/
+halguard_models/
+_test_cfg.json
 *.pyc

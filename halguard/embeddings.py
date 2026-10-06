@@ -91,7 +91,11 @@ class STEmbedder(Embedder):
         from sentence_transformers import SentenceTransformer
         self._model_name = model_name
         self._model = SentenceTransformer(model_name)
-        self._dim = self._model.get_sentence_embedding_dimension()
+        # ST 3.x 用 get_sentence_embedding_dimension；ST 6.x 起改名为 get_embedding_dimension
+        try:
+            self._dim = self._model.get_embedding_dimension()
+        except AttributeError:
+            self._dim = self._model.get_sentence_embedding_dimension()
 
     def embed(self, texts):
         if isinstance(texts, str):
@@ -107,7 +111,11 @@ class STEmbedder(Embedder):
         from sentence_transformers import SentenceTransformer
         self._model_name = state["model_name"]
         self._model = SentenceTransformer(self._model_name)
-        self._dim = self._model.get_sentence_embedding_dimension()
+        # 与 __init__ 保持一致：ST 6.x 起改名 get_embedding_dimension
+        try:
+            self._dim = self._model.get_embedding_dimension()
+        except AttributeError:
+            self._dim = self._model.get_sentence_embedding_dimension()
 
 
 def get_embedder(kind: str = "auto", st_model: str = "sentence-transformers/all-MiniLM-L6-v2") -> Embedder:

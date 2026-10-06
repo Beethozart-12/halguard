@@ -160,7 +160,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
                     if cfg.claim_extraction == "llm"
                     else V.extract_claims(content)
                 )
-                report = V.score_claims(claims, chunk_embs, retrieval.embedder, cfg.support_threshold)
+                report = V.score_claims(claims, chunk_embs, retrieval.embedder, cfg.support_threshold, chunk_texts=chunks)
                 risk = V.compute_risk(report)
 
                 if risk > cfg.risk_threshold and cfg.action_on_risk == "reask":

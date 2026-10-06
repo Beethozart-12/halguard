@@ -8,6 +8,17 @@ def test_extract_claims_filters_questions():
     assert "sky is blue" in claims[0].lower()
 
 
+def test_extract_claims_splits_chinese_sentences():
+    # 中文无空格，必须用 。！？ 直接切分，否则两句话会被当成一个断言漏检
+    text = "巴黎是德国的首都。巴黎是法国的首都，位于塞纳河畔。"
+    claims = extract_claims(text)
+    assert len(claims) == 2, f"中文未按句号切分：{claims}"
+    # 问句应被跳过
+    claims2 = extract_claims("巴黎的首都是哪里？巴黎是法国的首都。")
+    assert len(claims2) == 1
+    assert "巴黎是法国的首都" in claims2[0]
+
+
 def test_score_claims_supported_vs_not():
     emb = TFIDFEmbedder().fit(["Paris is the capital of France.", "The cat sat on the mat."])
     chunk_embs = emb.embed(["Paris is the capital of France."])

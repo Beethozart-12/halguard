@@ -54,7 +54,7 @@ def extract_claims(text: str) -> List[str]:
         return []
     # 去掉代码块，避免把代码当事实
     text = re.sub(r"```.*?```", " ", text, flags=re.S)
-    raw = re.split(r"(?<=[.!?。！？])\s+|\n+", text)
+    raw = re.split(r"(?<=[.!?。！？])|\n+", text)
     claims: List[str] = []
     for s in raw:
         s = s.strip(" \t\n-•*→ ")

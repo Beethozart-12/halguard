@@ -1,0 +1,34 @@
+services:
+  halguard:
+    build: .
+    container_name: halguard
+    ports:
+      - "8849:8849"
+    volumes:
+      - ./knowledge:/app/knowledge:ro          # 知识库（改完重启容器即生效重建索引）
+      - halguard_index:/data                   # 检索索引持久化（重建容器不丢）
+      - ./halguard_models:/models:ro           # 本地嵌入模型（避免运行时联网下载）
+    environment:
+      # 默认指向宿主机 Ollama；如启用下方 ollama 服务，请改为 http://ollama:11434/v1
+      HALGUARD_BACKEND_BASE_URL: ${HALGUARD_BACKEND_BASE_URL:-http://host.docker.internal:11434/v1}
+      HALGUARD_BACKEND_MODEL: ${HALGUARD_BACKEND_MODEL:-llama3.1:8b}
+      HALGUARD_ST_MODEL: /models/paraphrase-multilingual-MiniLM-L12-v2
+    extra_hosts:
+      - "host.docker.internal:host-gateway"    # Linux 下也可访问宿主机
+    restart: unless-stopped
+
+  # 可选：连 Ollama 一起一键起 —— docker compose --profile ollama up -d
+  # 起后执行一次拉模型：docker compose --profile ollama exec ollama ollama pull llama3.1:8b
+  ollama:
+    image: ollama/ollama:latest
+    container_name: halguard-ollama
+    profiles: ["ollama"]
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  halguard_index:
+  ollama_models:

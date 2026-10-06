@@ -1,0 +1,14 @@
+.git
+.gitignore
+.learnings/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+halguard_models/
+.halguard_index/
+halguard.egg-info/
+build/
+dist/
+tests/
+docker-compose.yml
+_test_cfg.json

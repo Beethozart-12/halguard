@@ -69,13 +69,47 @@ halguard verify --text "巴黎是德国的首都。" --context "巴黎是法国�
 
 查看状态：`halguard status`
 
+## 一键部署（Docker Compose）
+
+前置：装好 [Docker Desktop](https://www.docker.com/products/docker-desktop/)，并把嵌入模型放到 `./halguard_models/paraphrase-multilingual-MiniLM-L12-v2/`（仓库 `download_model.py` 可下载）。
+
+```bash
+# 一键启动（首次会自动构建镜像并摄入 knowledge/ 建索引）
+docker compose up -d
+
+# 查看日志
+docker compose logs -f halguard
+```
+
+默认配置：
+
+- HalGuard 代理监听 `http://localhost:8849/v1`，把客户端 `base_url` 指过来即可。
+- 后端 LLM 默认指向**宿主机上的 Ollama**（`host.docker.internal:11434`）。
+- 嵌入模型从挂载的 `/models` 本地加载，**不联网下载**（国内友好）。
+- 检索索引持久化在 named volume `halguard_index`，重建容器不丢。
+
+变体用法：
+
+```bash
+# 连 Ollama 容器一起一键起（拉起 halguard + ollama 两个服务）
+docker compose --profile ollama up -d
+# 然后让 HalGuard 指向容器内的 Ollama 并拉一次模型
+HALGUARD_BACKEND_BASE_URL=http://ollama:11434/v1 docker compose --profile ollama up -d
+docker compose --profile ollama exec ollama ollama pull llama3.1:8b
+
+# 更换后端模型 / 配置，全部通过环境变量覆盖（见下方「配置」）
+HALGUARD_BACKEND_MODEL=qwen2.5:7b docker compose up -d
+```
+
+> 更新知识库后执行 `docker compose restart halguard`——若索引缺失会自动重新摄入；若想强制重建，先 `docker compose down -v` 清掉索引卷再 `up`。
+
 ## 让 HalGuard「随 AI 一起运行」
 
 HalGuard 是常驻代理，最可靠的做法是与本地 LLM 一起启动。任选其一：
 
 - **Linux/macOS**：用 `systemd` / `launchd` / `supervisor` 同时拉起 `ollama serve`（或你的推理服务）与 `halguard serve`。
 - **Windows**：把两个程序放进同一个开机/启动脚本，或用 `nssm` 注册为服务。
-- **Docker**：在 `docker-compose.yml` 中同时编排推理服务与 `halguard serve`，让应用只连 HalGuard 端口。
+- **Docker**：见上方「一键部署（Docker Compose）」；默认编排里也带了可选的 Ollama 服务（`--profile ollama`）。
 
 只要客户端指向 HalGuard 的端口，就保证「本地 AI 运行时，抗幻觉同步生效」。
 

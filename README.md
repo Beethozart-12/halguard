@@ -128,6 +128,28 @@ HalGuard 是常驻代理，最可靠的做法是与本地 LLM 一起启动。任
 | `risk_threshold` | `0.30` | 整体风险触发动作的下限 |
 | `action_on_risk` | `flag` | `flag`/`redact`/`reask`/`none` |
 | `append_warning` | `true` | flag 时是否在回复末尾追加警告 |
+| `websearch_enabled` | `false` | **联网搜索开关**：开启后每次提问先搜索网页，并强制模型仅依据搜索结果作答（环境变量 `HALGUARD_WEBSEARCH=1`；请求体传 `"websearch": true/false` 可按次覆盖）|
+| `websearch_max_results` | `5` | 每次搜索注入的网页结果数 |
+| `websearch_timeout` | `10.0` | 单次搜索超时（秒）|
+
+### 联网搜索模式（强制接地）
+
+打开开关后，代理的流程变为：**搜索 → 注入 → 生成 → 验证**——
+
+1. 以用户问题为查询词执行网络搜索（搜索源依次回退：**360 搜索 → Bing → DuckDuckGo**，均为无需 API Key 的 HTML 解析）；
+2. 搜索结果作为[网络搜索结果]注入 system 消息，并强制指令"仅依据搜索结果作答、标注来源编号、搜不到就明说，不要编造"；
+3. 回答中的断言会与搜索结果做语义支持度校验，低支持度断言照常被标记/告警；
+4. 内置**相关性门控**：与查询完全无关的搜索结果（Bing 对程序化请求的反爬污染特征是 HTTP 200 但结果无关）会被自动剔除，防止错误上下文误导模型。
+
+搜索失败时不会沉默失败：会向模型注入"搜索失败"的诚实指令（要求声明未经联网核实、不得编造易变事实）。
+
+```bash
+# 请求级开关示例（OpenAI 兼容接口，额外字段 websearch）
+curl http://localhost:8849/v1/chat/completions -H "Content-Type: application/json" \
+  -d '{"model":"qwen3:4b","messages":[{"role":"user","content":"今天有什么科技新闻？"}],"websearch":true}'
+```
+
+内置网页客户端 `chat.html` 顶栏已有「🌐 联网搜索」开关，回答下方会显示搜索来源列表。
 
 ## 局限与说明
 

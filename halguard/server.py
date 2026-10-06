@@ -24,6 +24,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 from .config import HalGuardConfig
 from .retrieval import RetrievalIndex
 from . import verify as V
+from .websearch import web_search as _web_search
 
 
 def _last_user_message(messages: List[Dict]) -> str:
@@ -44,6 +45,27 @@ def _build_context_block(chunks: List[str]) -> Optional[str]:
         "你是严谨的助手。请【仅依据】下面提供的[参考上下文]作答，"
         "不要引入上下文之外的任何事实；对关键事实用来源编号（如 [1]）标注。\n\n"
         "=== 参考上下文 ===\n" + body
+    )
+
+
+def _build_websearch_block(chunks: List[str]) -> str:
+    """联网搜索模式的强制接地块：模型必须只依据搜索结果作答。"""
+    body = "\n\n".join(f"[{i + 1}] {c}" for i, c in enumerate(chunks))
+    return (
+        "【联网搜索模式已开启】你必须【仅依据】下面提供的[网络搜索结果]回答用户问题：\n"
+        "- 不得引入搜索结果之外的任何事实，即使你\"记得\"相关信息；\n"
+        "- 搜索结果未覆盖的问题，明确告知\"搜索结果中没有相关信息\"，不要编造；\n"
+        "- 对关键事实用来源编号（如 [1]）标注。\n\n"
+        "=== 网络搜索结果 ===\n" + body
+    )
+
+
+def _build_websearch_failed_block() -> str:
+    """搜索失败时的诚实指令：禁止在无依据情况下编造最新信息。"""
+    return (
+        "【联网搜索模式已开启，但本次网络搜索失败】你没有可依据的实时搜索结果。"
+        "请如实告知用户当前无法联网获取信息；如果仅凭你已有的知识回答，必须明确声明"
+        "\"以下内容未经联网核实\"，并且不要编造具体的数据、日期、价格等易变事实。"
     )
 
 
@@ -113,6 +135,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "backend_model": cfg.backend_model,
             "kb_chunks": retrieval.count(),
             "embedder": retrieval.embedder.name,
+            "websearch_default": cfg.websearch_enabled,
         }
 
     @app.get("/v1/models")
@@ -131,13 +154,61 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
         messages = payload.get("messages", [])
         query = _last_user_message(messages)
 
-        # 检索上下文
-        chunks, chunk_embs = ([], None)
-        if retrieval.count() > 0 and query:
-            chunks, chunk_embs = retrieval.query(query, top_k=cfg.top_k)
+        # ---- 联网搜索开关：请求级 "websearch": true/false 覆盖全局默认 ----
+        ws_requested = payload.pop("websearch", None)
+        ws_enabled = bool(ws_requested) if ws_requested is not None else cfg.websearch_enabled
+        ws_sources: List[Dict] = []
+        ws_chunks: List[str] = []
+        ws_failed = False
+        if ws_enabled and query:
+            try:
+                results = _web_search(
+                    query,
+                    max_results=cfg.websearch_max_results,
+                    timeout=cfg.websearch_timeout,
+                )
+            except Exception:
+                results = []
+            if results:
+                ws_sources = [{"title": r["title"], "url": r["url"]} for r in results]
+                ws_chunks = [
+                    f"{r['title']}。{r['snippet']}（来源: {r['url']}）" for r in results
+                ]
+            else:
+                ws_failed = True
 
-        # 流式：直接透传（不做验证，避免破坏流）
+        # 检索本地知识库上下文
+        kb_chunks: List[str] = []
+        kb_embs = None
+        if retrieval.count() > 0 and query:
+            kb_chunks, kb_embs = retrieval.query(query, top_k=cfg.top_k)
+
+        # 合并上下文：联网模式下搜索结果优先，本地知识库其后
+        chunks: List[str] = []
+        chunk_embs = None
+        if ws_chunks:
+            chunks = ws_chunks + kb_chunks
+            import numpy as _np
+            ws_embs = _np.asarray(retrieval.embedder.embed(ws_chunks), dtype=_np.float32)
+            chunk_embs = (
+                _np.vstack([ws_embs, _np.asarray(kb_embs, dtype=_np.float32)])
+                if kb_embs is not None and len(kb_embs) > 0
+                else ws_embs
+            )
+        else:
+            chunks, chunk_embs = kb_chunks, kb_embs
+
+        # 生成注入的 system 接地块（联网模式用强制块；搜索失败用诚实指令）
+        context_block = None
+        if ws_enabled:
+            context_block = _build_websearch_block(chunks) if chunks else _build_websearch_failed_block()
+        elif chunks:
+            context_block = _build_context_block(chunks)
+
+        # 流式：注入接地块后透传（验证与流式兼容，暂不验证）
         if payload.get("stream"):
+            if context_block:
+                payload["messages"] = _inject_context(messages, context_block)
             url = cfg.backend_base_url.rstrip("/") + "/chat/completions"
             headers = {
                 "Authorization": f"Bearer {cfg.backend_api_key}",
@@ -149,10 +220,11 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
 
         # 构造转发 payload
         fwd = dict(payload)
+        fwd.pop("websearch", None)  # 不把开关字段透传给后端
         fwd["model"] = cfg.backend_model
         fwd["stream"] = False
-        if chunks:
-            fwd["messages"] = _inject_context(messages, _build_context_block(chunks))
+        if context_block:
+            fwd["messages"] = _inject_context(messages, context_block)
 
         async with httpx.AsyncClient(timeout=180.0) as client:
             data = await _call_backend(client, cfg, fwd)
@@ -211,6 +283,12 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "retrieved_chunks": len(chunks),
             "claims": report,
             "warning": warning,
+            "websearch": {
+                "enabled": ws_enabled,
+                "failed": ws_failed,
+                "query": query,
+                "sources": ws_sources,
+            },
         }
 
         _record({
@@ -219,6 +297,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "risk": risk,
             "action": action_taken,
             "unsupported": [r["claim"] for r in report if r["unsupported"]],
+            "websearch": ws_enabled,
         })
         return JSONResponse(data)
 

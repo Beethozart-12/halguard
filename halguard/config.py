@@ -33,6 +33,14 @@ class HalGuardConfig:
     claim_extraction: str = "heuristic"  # heuristic | llm
     append_warning: bool = True       # 当 flag 时，把警告块追加到回复末尾
 
+    # ---- 联网搜索开关（强制联网模式）----
+    # 开启后：转发前先执行网络搜索，把结果作为[网络搜索结果]注入上下文，
+    # 并强制模型仅依据搜索结果作答、标注来源编号。请求体可传 "websearch": true/false
+    # 对单次请求覆盖此默认值。
+    websearch_enabled: bool = False
+    websearch_max_results: int = 5   # 每次搜索注入的网页结果数
+    websearch_timeout: float = 10.0  # 单次搜索超时（秒）
+
     # ---- 路径 ----
     kb_path: str = "./knowledge"
     index_path: str = "./.halguard_index"
@@ -61,6 +69,9 @@ class HalGuardConfig:
             "ACTION_ON_RISK": "action_on_risk",
             "CLAIM_EXTRACTION": "claim_extraction",
             "APPEND_WARNING": "append_warning",
+            "WEBSEARCH": "websearch_enabled",
+            "WEBSEARCH_MAX_RESULTS": "websearch_max_results",
+            "WEBSEARCH_TIMEOUT": "websearch_timeout",
             "KB_PATH": "kb_path",
             "INDEX_PATH": "index_path",
         }

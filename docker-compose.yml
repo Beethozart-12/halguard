@@ -13,6 +13,9 @@ services:
       HALGUARD_BACKEND_BASE_URL: ${HALGUARD_BACKEND_BASE_URL:-http://host.docker.internal:11434/v1}
       HALGUARD_BACKEND_MODEL: ${HALGUARD_BACKEND_MODEL:-llama3.1:8b}
       HALGUARD_ST_MODEL: /models/paraphrase-multilingual-MiniLM-L12-v2
+      # 联网搜索全局默认开关（1=默认开启；客户端也可按请求传 "websearch": true/false 覆盖）
+      HALGUARD_WEBSEARCH: ${HALGUARD_WEBSEARCH:-0}
+      HALGUARD_WEBSEARCH_MAX_RESULTS: ${HALGUARD_WEBSEARCH_MAX_RESULTS:-5}
     extra_hosts:
       - "host.docker.internal:host-gateway"    # Linux 下也可访问宿主机
     restart: unless-stopped

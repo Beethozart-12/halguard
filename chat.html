@@ -30,6 +30,19 @@
     border-radius: 6px; padding: 5px 9px; font-size: 12px; width: 190px;
   }
   .cfg input#model { width: 110px; }
+  .switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+  .switch input { display: none; }
+  .switch .track {
+    width: 34px; height: 18px; border-radius: 20px; background: var(--border);
+    position: relative; transition: background .15s;
+  }
+  .switch .track::after {
+    content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
+    border-radius: 50%; background: var(--text); transition: left .15s;
+  }
+  .switch input:checked + .track { background: var(--accent); }
+  .switch input:checked + .track::after { left: 18px; }
+  .switch input:disabled + .track { opacity: .4; }
   #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
   #dot.ok { background: var(--ok); } #dot.bad { background: var(--bad); }
   #status { font-size: 12px; color: var(--muted); }
@@ -75,11 +88,15 @@
   <div class="cfg">
     <label>服务地址</label><input id="baseUrl" value="http://localhost:8849/v1">
     <label>模型</label><input id="model" value="qwen3:4b">
+    <label class="switch" title="开启后每次提问先联网搜索，强制模型仅依据搜索结果作答并标注来源">
+      <input type="checkbox" id="websearch"><span class="track"></span>
+      <span style="font-size:12px;color:var(--muted)">🌐 联网搜索</span>
+    </label>
   </div>
 </header>
 
 <div id="chat">
-  <div class="msg bot hint">已接入 HalGuard 抗幻觉代理：回答会基于本地知识库并自动标注来源 [n]；<br>编造的内容会被 ❌ 标出并给出风险分。试试问："埃菲尔铁塔是什么时候建成的？"</div>
+  <div class="msg bot hint">已接入 HalGuard 抗幻觉代理：回答基于本地知识库并自动标注来源 [n]，编造内容会被 ❌ 标出；<br>顶栏打开 <b>🌐 联网搜索</b> 后，每次提问先搜索网页，并强制模型仅依据搜索结果作答。</div>
 </div>
 
 <form id="f">
@@ -120,7 +137,15 @@ function addHgPanel(el, hg) {
   let html = `<div class="row">
     <span class="pill ${riskClass(risk)}">幻觉风险 ${(risk * 100).toFixed(0)}%</span>
     ${hg.action && hg.action !== 'none' ? `<span class="pill act">动作: ${hg.action}</span>` : ''}
+    ${hg.websearch?.enabled ? `<span class="pill act">🌐 联网${hg.websearch.failed ? '（搜索失败）' : `· ${hg.websearch.sources?.length || 0} 条来源`}</span>` : ''}
   </div>`;
+  const srcs = hg.websearch?.sources || [];
+  if (srcs.length) {
+    html += '<div class="claims"><b>🌐 搜索来源：</b><ul>' +
+      srcs.slice(0, 5).map((s, i) =>
+        `<li><a href="${escapeHtml(s.url)}" target="_blank" style="color:var(--accent)">[${i + 1}] ${escapeHtml(s.title)}</a></li>`
+      ).join('') + '</ul></div>';
+  }
   const bad = (hg.claims || []).filter(c => c.unsupported);
   if (bad.length) {
     html += '<div class="claims"><b>❌ 疑似幻觉断言：</b><ul>' +
@@ -150,7 +175,8 @@ async function send() {
   input.value = '';
   sendBtn.disabled = true;
   addMsg('user', q);
-  const botEl = addMsg('bot', '思考中…');
+  const wsOn = document.getElementById('websearch').checked;
+  const botEl = addMsg('bot', wsOn ? '🌐 联网搜索中，随后思考…' : '思考中…');
   history.push({ role: 'user', content: q });
 
   const base = document.getElementById('baseUrl').value.replace(/\/+$/, '');
@@ -159,7 +185,9 @@ async function send() {
     const r = await fetch(base + '/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
-      body: JSON.stringify({ model, messages: history, stream: false, max_tokens: 1500 }),
+      // 联网模式注入搜索结果后，思考模型（qwen3 等）推理更长，需更大 token 预算，
+      // 否则预算被 <think> 耗尽导致正文为空
+      body: JSON.stringify({ model, messages: history, stream: false, max_tokens: wsOn ? 3000 : 1500, websearch: wsOn }),
     });
     if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
     const d = await r.json();

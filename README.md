@@ -9,7 +9,7 @@
 本地小模型（SLM）幻觉主要源于「缺乏依据地编造事实」。HalGuard 在模型生成前/后各布一道防线：
 
 1. **检索增强接地（RAG Grounding）** — 生成前，从你提供的本地知识库检索相关事实，注入 system 上下文，并强制模型「仅依据上下文作答、并对事实标注来源」。模型有依据可查，就少编造。
-2. **生成后验证（Post-generation Verification）** — 生成后，抽取回答中的事实性断言，逐条与检索到的上下文计算 **语义支持度**（余弦相似度）。支持度低于阈值的断言被标记为「疑似幻觉」；整体风险 = 不受支持断言占比。
+2. **生成后验证（Post-generation Verification）** — 生成后，抽取回答中的事实性断言，逐条与检索到的上下文计算 **语义支持度**（余弦相似度 + 灰度区字符 bigram 重合度的混合判定，专门捕捉"同主谓、换实体"的篡改句）。支持度低于阈值的断言被标记为「疑似幻觉」；整体风险 = 不受支持断言占比。
 3. **处置策略** — 按风险阈值执行：
    - `flag`（默认）：在回复末尾追加警告，列出疑似幻觉断言及支持度。
    - `redact`：直接移除/替换不受支持的断言。
@@ -66,6 +66,11 @@ halguard verify --text "巴黎是德国的首都。" --context "巴黎是法国�
 # 断言数: 1  整体风险: 1.00
 #   [❌ 疑似幻觉] (支持度 0.00) 巴黎是德国的首都。
 ```
+
+> 上面的示例输出以**干净环境**（未安装 sentence-transformers、未构建索引）为准：
+> 安装 st 后支持度数值会不同（语义嵌入对中文也有相似度），已构建索引时输出以索引命中块为准。
+> 另外 `--context` 仅在「无索引」或「索引查询为空」时作为对照；索引存在时会被忽略——
+> 若想强制对照指定文本，请把该文本放入临时目录后 `halguard ingest <目录>`。
 
 查看状态：`halguard status`
 
@@ -127,10 +132,11 @@ HalGuard 是常驻代理，最可靠的做法是与本地 LLM 一起启动。任
 | `support_threshold` | `0.35` | 单条断言支持度下限（低于即疑似幻觉）|
 | `risk_threshold` | `0.30` | 整体风险触发动作的下限 |
 | `action_on_risk` | `flag` | `flag`/`redact`/`reask`/`none` |
+| `claim_extraction` | `heuristic` | 断言抽取方式：`heuristic`（规则）/ `llm`（用后端模型抽取，更准但更慢）|
 | `append_warning` | `true` | flag 时是否在回复末尾追加警告 |
 | `websearch_enabled` | `false` | **联网搜索开关**：开启后每次提问先搜索网页，并强制模型仅依据搜索结果作答（环境变量 `HALGUARD_WEBSEARCH=1`；请求体传 `"websearch": true/false` 可按次覆盖）|
-| `websearch_max_results` | `5` | 每次搜索注入的网页结果数 |
-| `websearch_timeout` | `10.0` | 单次搜索超时（秒）|
+| `websearch_max_results` | `5` | 每次搜索注入的网页结果数（`HALGUARD_WEBSEARCH_MAX_RESULTS`）|
+| `websearch_timeout` | `10.0` | 单次搜索超时秒数（`HALGUARD_WEBSEARCH_TIMEOUT`）|
 
 ### 联网搜索模式（强制接地）
 
@@ -150,6 +156,9 @@ curl http://localhost:8849/v1/chat/completions -H "Content-Type: application/jso
 ```
 
 内置网页客户端 `chat.html` 顶栏已有「🌐 联网搜索」开关，回答下方会显示搜索来源列表。
+
+> **思考模型提示**：qwen3 等思考模型的推理会消耗 token 预算，联网模式上下文更长，
+> 建议 `max_tokens >= 3000`，否则预算被推理耗尽会返回空正文（`chat.html` 已自动处理）。
 
 ## 局限与说明
 

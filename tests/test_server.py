@@ -27,7 +27,7 @@ def _build_retrieval():
 
 @pytest.fixture(autouse=True)
 def patch_backend(monkeypatch):
-    async def fake(client, cfg, payload):
+    async def fake(client, cfg, payload, override=None):
         # 返回一个与上下文无关的"幻觉"回答
         return {
             "choices": [{"message": {"role": "assistant",

@@ -109,9 +109,9 @@ def _ensure_budget(payload: Dict, floor: int) -> None:
         payload["max_tokens"] = floor
 
 
-async def _call_backend_with_retry(client, cfg: HalGuardConfig, payload: Dict) -> Dict:
+async def _call_backend_with_retry(client, cfg: HalGuardConfig, payload: Dict, override: Optional[Dict] = None) -> Dict:
     """调用后端；若正文为空但 reasoning 非空（思考耗尽预算），双倍预算重试一次。"""
-    data = await _call_backend(client, cfg, payload)
+    data = await _call_backend(client, cfg, payload, override)
     msg = data.get("choices", [{}])[0].get("message", {}) or {}
     content = msg.get("content") or ""
     if content.strip() or not (msg.get("reasoning") or "").strip():
@@ -119,23 +119,65 @@ async def _call_backend_with_retry(client, cfg: HalGuardConfig, payload: Dict) -
     retry = dict(payload)
     retry["max_tokens"] = max(int(payload.get("max_tokens") or 2048), 2048) * 2
     try:
-        return await _call_backend(client, cfg, retry)
+        return await _call_backend(client, cfg, retry, override)
     except Exception:
         return data  # 重试失败则返回原响应，由上层兜底
 
 
-async def _call_backend(client: httpx.AsyncClient, cfg: HalGuardConfig, payload: Dict) -> Dict:
-    url = cfg.backend_base_url.rstrip("/") + "/chat/completions"
+def _resolve_backend(cfg: HalGuardConfig, override: Optional[Dict]):
+    """解析本次请求使用的后端：请求级 backend 覆盖优先，否则用全局配置。
+
+    返回 (base_url, api_key, model)。仅当字段为 None（未提供）时回退全局配置；
+    显式传空串视为"提供了但无效"，拒绝（防止笔误静默走错后端）。
+    校验失败抛 ValueError（上层映射为 400）。
+    """
+    if not override:
+        return cfg.backend_base_url, cfg.backend_api_key, cfg.backend_model
+
+    def pick(key: str, default: str) -> str:
+        v = override.get(key)
+        return default if v is None else v
+
+    base_url = pick("base_url", cfg.backend_base_url)
+    api_key = pick("api_key", cfg.backend_api_key)
+    model = pick("model", cfg.backend_model)
+    if not (isinstance(base_url, str) and base_url.startswith(("http://", "https://"))):
+        raise ValueError("backend.base_url 必须是以 http:// 或 https:// 开头的地址")
+    if not (isinstance(api_key, str) and api_key.strip()):
+        raise ValueError("backend.api_key 不能为空（云端 API 需要密钥）")
+    if not (isinstance(model, str) and model.strip()):
+        raise ValueError("backend.model 不能为空")
+    return base_url, api_key.strip(), model.strip()
+
+
+def _redact_backend(be: Optional[Dict]) -> Optional[Dict]:
+    """元数据/日志用的后端信息：绝不包含 api_key。"""
+    if not be:
+        return None
+    return {
+        "base_url": be.get("base_url"),
+        "model": be.get("model"),
+        "kind": "cloud" if be.get("api_key") and be.get("base_url") else "local",
+    }
+
+
+async def _call_backend(client: httpx.AsyncClient, cfg: HalGuardConfig, payload: Dict,
+                        override: Optional[Dict] = None) -> Dict:
+    base_url, api_key, model = _resolve_backend(cfg, override)
+    p = dict(payload)
+    if override:
+        p["model"] = model
+    url = base_url.rstrip("/") + "/chat/completions"
     headers = {
-        "Authorization": f"Bearer {cfg.backend_api_key}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
-    resp = await client.post(url, json=payload, headers=headers, timeout=180.0)
+    resp = await client.post(url, json=p, headers=headers, timeout=180.0)
     resp.raise_for_status()
     return resp.json()
 
 
-async def _extract_claims_llm(client, cfg, text, payload_template) -> List[str]:
+async def _extract_claims_llm(client, cfg, text, payload_template, override=None) -> List[str]:
     """可选：用后端 LLM 抽取断言（失败回退启发式）。"""
     sys_msg = {
         "role": "system",
@@ -146,7 +188,7 @@ async def _extract_claims_llm(client, cfg, text, payload_template) -> List[str]:
     p["messages"] = [sys_msg, user_msg]
     p["stream"] = False
     try:
-        data = await _call_backend(client, cfg, p)
+        data = await _call_backend(client, cfg, p, override)
         content = data["choices"][0]["message"]["content"]
         return [s.strip("-•* ").strip() for s in content.splitlines() if s.strip()]
     except Exception:
@@ -181,23 +223,54 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "kb_chunks": retrieval.count(),
             "embedder": retrieval.embedder.name,
             "websearch_default": cfg.websearch_enabled,
+            "per_request_backend_override": True,
         }
 
-    @app.get("/v1/models")
-    async def models():
-        # 透传，便于客户端发现模型
+    @app.api_route("/v1/models", methods=["GET", "POST"])
+    async def models(request: Request):
+        # 透传，便于客户端发现模型；POST 支持请求级 backend 覆盖（用于云端"测试连接"）
+        override = None
+        if request.method == "POST":
+            try:
+                body = await request.json()
+                override = body.get("backend") or None
+            except Exception:
+                override = None
+        try:
+            base_url, api_key, model = _resolve_backend(cfg, override)
+        except ValueError as e:
+            return JSONResponse({"error": {"message": str(e), "type": "invalid_request_error"}}, status_code=400)
         async with httpx.AsyncClient() as client:
             try:
-                data = await _call_backend(client, cfg, {"model": cfg.backend_model, "messages": []})
-            except Exception:
-                data = {"object": "list", "data": [{"id": cfg.backend_model, "object": "model"}]}
-        return JSONResponse(data)
+                resp = await client.get(
+                    base_url.rstrip("/") + "/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    timeout=30.0,
+                )
+                resp.raise_for_status()
+                return JSONResponse(resp.json())
+            except Exception as e:
+                # 上游 models 端点不可用（如部分 Ollama 版本）时回退单模型列表
+                if override:
+                    return JSONResponse(
+                        {"error": {"message": f"连接失败：{type(e).__name__}", "type": "upstream_error"}},
+                        status_code=502,
+                    )
+                return JSONResponse({"object": "list", "data": [{"id": model, "object": "model"}]})
 
     @app.post("/v1/chat/completions")
     async def chat_completions(request: Request):
         payload = await request.json()
         messages = payload.get("messages", [])
         query = _last_user_message(messages)
+
+        # ---- 请求级后端覆盖：云端 AI API 经 HalGuard 服务端代发（免浏览器 CORS、Key 不落前端）----
+        backend_override = payload.pop("backend", None)
+        try:
+            be_url, be_key, be_model = _resolve_backend(cfg, backend_override)
+        except ValueError as e:
+            return JSONResponse({"error": {"message": str(e), "type": "invalid_request_error"}}, status_code=400)
+        override = backend_override if backend_override else None
 
         # ---- 联网搜索开关：请求级 "websearch": true/false 覆盖全局默认 ----
         ws_requested = payload.pop("websearch", None)
@@ -263,19 +336,21 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
                 payload["messages"] = _inject_context(messages, context_block)
             if ws_enabled:
                 _ensure_budget(payload, cfg.websearch_min_max_tokens)
-            url = cfg.backend_base_url.rstrip("/") + "/chat/completions"
+            if override:
+                payload["model"] = be_model
+            url = be_url.rstrip("/") + "/chat/completions"
             headers = {
-                "Authorization": f"Bearer {cfg.backend_api_key}",
+                "Authorization": f"Bearer {be_key}",
                 "Content-Type": "application/json",
             }
-            async with httpx.AsyncClient(timeout=180.0) as client:
-                resp = await client.post(url, json=payload, headers=headers, timeout=180.0)
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                resp = await client.post(url, json=payload, headers=headers, timeout=300.0)
             return JSONResponse(resp.json() if resp.headers.get("content-type", "").startswith("application/json") else resp.text)
 
         # 构造转发 payload
         fwd = dict(payload)
         fwd.pop("websearch", None)  # 不把开关字段透传给后端
-        fwd["model"] = cfg.backend_model
+        fwd["model"] = be_model
         fwd["stream"] = False
         if ws_enabled:
             _ensure_budget(fwd, cfg.websearch_min_max_tokens)
@@ -283,7 +358,22 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             fwd["messages"] = _inject_context(messages, context_block)
 
         async with httpx.AsyncClient(timeout=300.0) as client:
-            data = await _call_backend_with_retry(client, cfg, fwd)
+            try:
+                data = await _call_backend_with_retry(client, cfg, fwd, override)
+            except httpx.HTTPStatusError as e:
+                # 上游返回错误状态码（401 Key 错 / 404 模型不存在 / 429 限流…）——原样透传状态与信息
+                return JSONResponse(
+                    {"error": {"message": f"上游 API 返回 {e.response.status_code}",
+                               "type": "upstream_error", "detail": e.response.text[:300]}},
+                    status_code=e.response.status_code if 400 <= e.response.status_code < 600 else 502,
+                )
+            except httpx.HTTPError as e:
+                # 连接失败/DNS/超时等
+                return JSONResponse(
+                    {"error": {"message": f"无法连接上游 API：{type(e).__name__}",
+                               "type": "upstream_unreachable"}},
+                    status_code=502,
+                )
             content = data["choices"][0]["message"]["content"]
 
             # 仅在存在可对照上下文时才验证
@@ -292,7 +382,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             action_taken = "none"
             if chunks:
                 claims = (
-                    await _extract_claims_llm(client, cfg, content, fwd)
+                    await _extract_claims_llm(client, cfg, content, fwd, override)
                     if cfg.claim_extraction == "llm"
                     else V.extract_claims(content)
                 )
@@ -312,7 +402,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
                     )
                     reask_payload = dict(fwd)
                     reask_payload["messages"] = reask_msgs
-                    data2 = await _call_backend(client, cfg, reask_payload)
+                    data2 = await _call_backend(client, cfg, reask_payload, override)
                     content = data2["choices"][0]["message"]["content"]
                     data = data2
                     action_taken = "reask"
@@ -339,6 +429,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "retrieved_chunks": len(chunks),
             "claims": report,
             "warning": warning,
+            "backend": _redact_backend(override),
             "websearch": {
                 "enabled": ws_enabled,
                 "failed": ws_failed,
@@ -355,6 +446,7 @@ def build_app(cfg: HalGuardConfig, retrieval: RetrievalIndex) -> FastAPI:
             "action": action_taken,
             "unsupported": [r["claim"] for r in report if r["unsupported"]],
             "websearch": ws_enabled,
+            "backend_model": be_model,  # 仅记录模型名，绝不记录 api_key
         })
         return JSONResponse(data)
 

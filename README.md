@@ -170,6 +170,59 @@ curl http://localhost:8849/v1/chat/completions -H "Content-Type: application/jso
 > `websearch_min_max_tokens`（默认 4096），若仍出现"正文空、只有推理内容"会**自动双倍预算重试一次**——
 > 因此即使客户端传了很小的 `max_tokens`，联网模式下模型也能正常回答。
 
+## 连接云端大模型 API（请求级后端覆盖）
+
+HalGuard 可把生成请求代发到**任何 OpenAI 兼容的云端 API**（DeepSeek / 通义千问 / 智谱 GLM / Kimi / OpenAI / OpenRouter / 硅基流动……），
+并**同样享受**本地知识库接地、联网搜索接地、生成后幻觉验证——即"云端模型的智能 + 本地的抗幻觉"。
+
+**为什么经由 HalGuard 代发而不是浏览器直连**：① 绕过浏览器 CORS 限制；② API Key 只存在于本机服务端，不暴露给页面；③ 接地/验证/搜索三件套对云端模型同样生效。
+
+### 请求字段
+
+在 `/v1/chat/completions` 请求体中加 `backend` 对象（按次覆盖全局后端）：
+
+```json
+{
+  "model": "任意占位",
+  "messages": [{"role": "user", "content": "你好"}],
+  "backend": {
+    "base_url": "https://api.deepseek.com/v1",
+    "api_key": "sk-你的密钥",
+    "model": "deepseek-chat"
+  }
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| `base_url` | 云端 API 的 OpenAI 兼容地址（须 `http(s)://` 开头）|
+| `api_key` | 密钥（仅本次请求内存中使用，**绝不写入日志/元数据**）|
+| `model` | 模型名（覆盖全局 `backend_model`）|
+
+字段可为 `null`/缺省（逐项回退全局配置）；显式空串会被拒绝（400）。`websearch`、`backend` 两个开关字段互不干扰，可同时使用。
+
+### 网页客户端用法
+
+双击 `chat.html` → 右上角 **⚙ 设置** → 选「云端大模型 API」→ 点预设（DeepSeek/通义/智谱/Kimi/OpenAI/OpenRouter/硅基流动）自动填充 → 粘贴 API Key → **测试连接**（经 HalGuard 请求上游 `/models` 验证）→ 保存。顶栏会出现 `☁️ 模型名` 芯片，之后每轮问答都走该云端模型，回答下方仍显示来源、风险分与疑似幻觉断言。配置保存在浏览器 localStorage。
+
+### 服务端点
+
+- `POST /v1/models`（带 `backend` 字段）：测试连接 / 拉取上游模型列表。
+- 响应元数据 `halguard.backend = {base_url, model, kind}`：标注本次实际使用的后端（不含密钥）。
+- 上游错误规范化透传：401/403 → Key 无效、404 → 模型不存在、429 → 限流；连接失败 → 502。
+
+### 命令行示例
+
+```bash
+# 单次请求走 DeepSeek，同时开启联网搜索
+curl http://localhost:8849/v1/chat/completions -H "Content-Type: application/json" -d '{
+  "model": "any",
+  "messages": [{"role": "user", "content": "今天有什么新闻？"}],
+  "websearch": true,
+  "backend": {"base_url": "https://api.deepseek.com/v1", "api_key": "sk-xxx", "model": "deepseek-chat"}
+}'
+```
+
 ## 局限与说明
 
 - 验证依赖「检索到的上下文」作为事实基准。**知识库越准、越全，抗幻觉效果越好**。

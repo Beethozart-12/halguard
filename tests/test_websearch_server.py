@@ -156,7 +156,7 @@ def test_websearch_empty_content_retries_with_bigger_budget(retrieval, backend_c
     monkeypatch.setattr(S, "_web_search", lambda q, **kw: FAKE_RESULTS)
     calls = []
 
-    async def fake_backend(client, cfg, payload):
+    async def fake_backend(client, cfg, payload, override=None):
         calls.append(dict(payload))
         if len(calls) == 1:
             return {"choices": [{"message": {"role": "assistant", "content": "", "reasoning": "我想想……"}}]}
@@ -183,7 +183,7 @@ def test_websearch_budget_floor_applied(retrieval, backend_captured, monkeypatch
     monkeypatch.setattr(S, "_web_search", lambda q, **kw: FAKE_RESULTS)
     calls = []
 
-    async def fake_backend(client, cfg, payload):
+    async def fake_backend(client, cfg, payload, override=None):
         calls.append(dict(payload))
         return {"choices": [{"message": {"role": "assistant", "content": "好的。"}}]}
 

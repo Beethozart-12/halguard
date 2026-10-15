@@ -6,7 +6,7 @@
 <title>HalGuard 聊天客户端</title>
 <style>
   :root {
-    --bg: #0f1117; --panel: #171a23; --border: #2a2f3d;
+    --bg: #0f1117; --panel: #171a23; --panel2: #10131a; --border: #2a2f3d;
     --text: #e6e9f0; --muted: #8b93a7; --accent: #4f8cff;
     --ok: #3fbf7f; --warn: #e6a23c; --bad: #e5484d;
   }
@@ -17,24 +17,37 @@
     display: flex; flex-direction: column; height: 100vh;
   }
   header {
-    padding: 12px 20px; border-bottom: 1px solid var(--border);
-    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+    padding: 10px 16px; border-bottom: 1px solid var(--border);
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
     background: var(--panel);
   }
-  header h1 { font-size: 16px; font-weight: 600; }
+  header h1 { font-size: 15px; font-weight: 600; white-space: nowrap; }
   header h1 span { color: var(--accent); }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; flex: none; }
+  #dot.ok { background: var(--ok); } #dot.bad { background: var(--bad); }
+  #status { font-size: 12px; color: var(--muted); }
   .cfg { display: flex; gap: 8px; align-items: center; margin-left: auto; flex-wrap: wrap; }
   .cfg label { font-size: 12px; color: var(--muted); }
-  .cfg input {
+  .cfg input, .cfg select {
     background: var(--bg); color: var(--text); border: 1px solid var(--border);
-    border-radius: 6px; padding: 5px 9px; font-size: 12px; width: 190px;
+    border-radius: 6px; padding: 5px 9px; font-size: 12px;
   }
-  .cfg input#model { width: 110px; }
+  .cfg input#model { width: 150px; }
+  .chip {
+    font-size: 11px; padding: 2px 9px; border-radius: 20px; white-space: nowrap;
+    background: rgba(79,140,255,.13); color: var(--accent); border: 1px solid rgba(79,140,255,.3);
+  }
+  .chip.local { background: rgba(63,191,127,.12); color: var(--ok); border-color: rgba(63,191,127,.3); }
+  .iconbtn {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    border-radius: 6px; padding: 4px 9px; font-size: 13px; cursor: pointer;
+  }
+  .iconbtn:hover { color: var(--text); border-color: var(--accent); }
   .switch { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
   .switch input { display: none; }
   .switch .track {
     width: 34px; height: 18px; border-radius: 20px; background: var(--border);
-    position: relative; transition: background .15s;
+    position: relative; transition: background .15s; flex: none;
   }
   .switch .track::after {
     content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px;
@@ -42,20 +55,28 @@
   }
   .switch input:checked + .track { background: var(--accent); }
   .switch input:checked + .track::after { left: 18px; }
-  .switch input:disabled + .track { opacity: .4; }
-  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); display: inline-block; }
-  #dot.ok { background: var(--ok); } #dot.bad { background: var(--bad); }
-  #status { font-size: 12px; color: var(--muted); }
+  .switch span.lbl { font-size: 12px; color: var(--muted); }
 
   #chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 14px; }
-  .msg { max-width: 78%; padding: 10px 14px; border-radius: 12px; line-height: 1.65; font-size: 14px; white-space: pre-wrap; word-break: break-word; }
-  .user { align-self: flex-end; background: #2b4a8f; border-bottom-right-radius: 3px; }
-  .bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg { max-width: 82%; padding: 10px 14px; border-radius: 12px; line-height: 1.7; font-size: 14px; word-break: break-word; }
+  .msg.user { align-self: flex-end; background: #2b4a8f; border-bottom-right-radius: 3px; white-space: pre-wrap; }
+  .msg.bot { align-self: flex-start; background: var(--panel); border: 1px solid var(--border); border-bottom-left-radius: 3px; }
+  .msg.bot p { margin: 0 0 8px; } .msg.bot p:last-child { margin-bottom: 0; }
+  .msg.bot code { background: var(--panel2); border: 1px solid var(--border); border-radius: 4px; padding: 1px 5px; font-size: 12.5px; font-family: Consolas, monospace; }
+  .msg.bot ul, .msg.bot ol { margin: 4px 0 8px 18px; }
+  .msg.bot a { color: var(--accent); }
+  .msgtools { display: flex; gap: 6px; margin-top: 6px; opacity: 0; transition: opacity .15s; }
+  .msg.bot:hover .msgtools { opacity: 1; }
+  .msgtools button {
+    background: none; border: 1px solid var(--border); color: var(--muted);
+    font-size: 11px; border-radius: 5px; padding: 2px 8px; cursor: pointer;
+  }
+  .msgtools button:hover { color: var(--text); }
   .hg {
     margin-top: 10px; padding: 8px 10px; border-radius: 8px; font-size: 12px;
-    background: #10131a; border: 1px solid var(--border);
+    background: var(--panel2); border: 1px solid var(--border);
   }
-  .hg .row { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 4px; }
+  .hg .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
   .pill { padding: 1px 8px; border-radius: 20px; font-size: 11px; }
   .pill.low  { background: rgba(63,191,127,.15); color: var(--ok); }
   .pill.mid  { background: rgba(230,162,60,.15); color: var(--warn); }
@@ -66,7 +87,7 @@
   .hg .claims li.bad { color: var(--bad); }
   .hint { color: var(--muted); font-size: 12px; }
 
-  form { display: flex; gap: 10px; padding: 14px 20px; border-top: 1px solid var(--border); background: var(--panel); }
+  form { display: flex; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--border); background: var(--panel); align-items: flex-end; }
   #input {
     flex: 1; background: var(--bg); color: var(--text);
     border: 1px solid var(--border); border-radius: 10px;
@@ -74,58 +95,217 @@
     font-family: inherit;
   }
   #input:focus { outline: none; border-color: var(--accent); }
-  button {
+  button.primary {
     background: var(--accent); color: #fff; border: none; border-radius: 10px;
-    padding: 0 22px; font-size: 14px; cursor: pointer; font-weight: 600;
+    padding: 0 20px; font-size: 14px; cursor: pointer; font-weight: 600; height: 52px;
   }
-  button:disabled { opacity: .5; cursor: not-allowed; }
+  button.primary:disabled { opacity: .5; cursor: not-allowed; }
+
+  /* 设置弹窗 */
+  #modalMask {
+    display: none; position: fixed; inset: 0; background: rgba(0,0,0,.55);
+    z-index: 50; align-items: center; justify-content: center;
+  }
+  #modalMask.show { display: flex; }
+  #modal {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    width: min(560px, 94vw); max-height: 90vh; overflow-y: auto; padding: 20px 22px;
+  }
+  #modal h2 { font-size: 16px; margin-bottom: 4px; }
+  #modal .sub { font-size: 12px; color: var(--muted); margin-bottom: 14px; }
+  .fgroup { margin-bottom: 12px; }
+  .fgroup label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .fgroup input, .fgroup select {
+    width: 100%; background: var(--bg); color: var(--text);
+    border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 13px;
+  }
+  .fgroup input:focus, .fgroup select:focus { outline: none; border-color: var(--accent); }
+  .radios { display: flex; gap: 10px; margin-bottom: 12px; }
+  .radios label {
+    flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 9px 10px;
+    font-size: 13px; cursor: pointer; text-align: center; color: var(--muted);
+  }
+  .radios label.on { border-color: var(--accent); color: var(--accent); background: rgba(79,140,255,.08); }
+  .radios input { display: none; }
+  #cloudFields { display: none; }
+  #cloudFields.show { display: block; }
+  .presetrow { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
+  .presetrow button {
+    background: var(--bg); border: 1px solid var(--border); color: var(--muted);
+    font-size: 12px; border-radius: 20px; padding: 3px 11px; cursor: pointer;
+  }
+  .presetrow button:hover { color: var(--accent); border-color: var(--accent); }
+  .modalbtns { display: flex; gap: 10px; margin-top: 16px; align-items: center; }
+  .modalbtns .spacer { flex: 1; }
+  #testResult { font-size: 12px; }
+  #testResult.ok { color: var(--ok); } #testResult.bad { color: var(--bad); }
 </style>
 </head>
 <body>
 <header>
   <h1>🛡️ <span>HalGuard</span> 聊天</h1>
   <span id="dot"></span><span id="status">连接中…</span>
+  <span id="backendChip" class="chip local">本地默认</span>
   <div class="cfg">
-    <label>服务地址</label><input id="baseUrl" value="http://localhost:8849/v1">
+    <label>服务地址</label><input id="baseUrl" value="http://localhost:8849/v1" size="22">
     <label>模型</label><input id="model" value="qwen3:4b">
     <label class="switch" title="开启后每次提问先联网搜索，强制模型仅依据搜索结果作答并标注来源">
       <input type="checkbox" id="websearch"><span class="track"></span>
-      <span style="font-size:12px;color:var(--muted)">🌐 联网搜索</span>
+      <span class="lbl">🌐 联网搜索</span>
     </label>
+    <button class="iconbtn" id="clearBtn" title="清空对话">🗑</button>
+    <button class="iconbtn" id="settingsBtn" title="设置 AI 后端（本地 / 云端 API）">⚙</button>
   </div>
 </header>
 
 <div id="chat">
-  <div class="msg bot hint">已接入 HalGuard 抗幻觉代理：回答基于本地知识库并自动标注来源 [n]，编造内容会被 ❌ 标出；<br>顶栏打开 <b>🌐 联网搜索</b> 后，每次提问先搜索网页，并强制模型仅依据搜索结果作答。</div>
+  <div class="msg bot hint">已接入 HalGuard 抗幻觉代理：回答基于本地知识库/联网搜索并自动标注来源 [n]，编造内容会被 ❌ 标出；<br>点右上角 <b>⚙ 设置</b> 可连接云端大模型 API（DeepSeek / 通义 / 智谱 / Kimi 等），同样享受接地与幻觉检测。</div>
 </div>
 
 <form id="f">
   <textarea id="input" placeholder="输入问题，回车发送（Shift+回车换行）"></textarea>
-  <button id="send">发送</button>
+  <button id="send" class="primary">发送</button>
 </form>
 
-<script>
-const chat = document.getElementById('chat');
-const input = document.getElementById('input');
-const sendBtn = document.getElementById('send');
-const dot = document.getElementById('dot');
-const statusEl = document.getElementById('status');
-let history = [];
+<!-- 设置弹窗 -->
+<div id="modalMask">
+  <div id="modal">
+    <h2>⚙ AI 后端设置</h2>
+    <div class="sub">云端 API 调用由 HalGuard 服务端代发：不受浏览器跨域限制，密钥不会离开本机。</div>
+    <div class="radios">
+      <label id="radioLocalLabel" class="on"><input type="radio" name="bk" value="local" checked>本地默认后端</label>
+      <label id="radioCloudLabel"><input type="radio" name="bk" value="cloud">云端大模型 API</label>
+    </div>
+    <div id="cloudFields">
+      <div class="fgroup">
+        <label>快速预设（点击自动填充，Key 需自填）</label>
+        <div class="presetrow" id="presetRow"></div>
+      </div>
+      <div class="fgroup">
+        <label>API Base URL（OpenAI 兼容）</label>
+        <input id="cloudBase" placeholder="https://api.deepseek.com/v1">
+      </div>
+      <div class="fgroup">
+        <label>API Key</label>
+        <input id="cloudKey" type="password" placeholder="sk-..." autocomplete="off">
+      </div>
+      <div class="fgroup">
+        <label>模型名</label>
+        <input id="cloudModel" placeholder="deepseek-chat">
+      </div>
+    </div>
+    <div class="modalbtns">
+      <button class="iconbtn" id="testBtn">测试连接</button>
+      <span id="testResult"></span>
+      <span class="spacer"></span>
+      <button class="iconbtn" id="cancelBtn">取消</button>
+      <button class="primary" id="saveBtn" style="height:34px;padding:0 16px">保存</button>
+    </div>
+  </div>
+</div>
 
-async function checkHealth() {
-  const base = document.getElementById('baseUrl').value.replace(/\/v1\/?$/, '');
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+const chat = $('chat'), input = $('input'), sendBtn = $('send');
+const dot = $('dot'), statusEl = $('status'), backendChip = $('backendChip');
+
+// ---------- 云端预设 ----------
+const PRESETS = [
+  { name: "DeepSeek",    base: "https://api.deepseek.com/v1",               model: "deepseek-chat" },
+  { name: "通义千问",     base: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
+  { name: "智谱 GLM",    base: "https://open.bigmodel.cn/api/paas/v4",      model: "glm-4-plus" },
+  { name: "Kimi",        base: "https://api.moonshot.cn/v1",                model: "moonshot-v1-8k" },
+  { name: "OpenAI",      base: "https://api.openai.com/v1",                 model: "gpt-4o-mini" },
+  { name: "OpenRouter",  base: "https://openrouter.ai/api/v1",              model: "openai/gpt-4o-mini" },
+  { name: "硅基流动",     base: "https://api.siliconflow.cn/v1",             model: "Qwen/Qwen2.5-7B-Instruct" },
+];
+
+// ---------- 配置持久化 ----------
+const LS_KEY = "halguard_settings_v1";
+function loadSettings() {
   try {
-    const r = await fetch(base + '/health', { signal: AbortSignal.timeout(4000) });
+    return Object.assign({ mode: "local", cloudBase: "", cloudKey: "", cloudModel: "" },
+      JSON.parse(localStorage.getItem(LS_KEY) || "{}"));
+  } catch (e) { return { mode: "local", cloudBase: "", cloudKey: "", cloudModel: "" }; }
+}
+function saveSettings(s) { localStorage.setItem(LS_KEY, JSON.stringify(s)); }
+let settings = loadSettings();
+
+function halguardBase() { return $('baseUrl').value.replace(/\/v1\/?$/, '').replace(/\/+$/, ''); }
+function apiBase() { return $('baseUrl').value.replace(/\/+$/, ''); }
+
+function currentBackendPayload() {
+  if (settings.mode !== "cloud") return null;
+  return {
+    base_url: settings.cloudBase.trim(),
+    api_key: settings.cloudKey.trim(),
+    model: settings.cloudModel.trim(),
+  };
+}
+
+function refreshBackendChip() {
+  if (settings.mode === "cloud" && settings.cloudModel) {
+    backendChip.textContent = "☁️ " + settings.cloudModel;
+    backendChip.className = "chip";
+    $('model').value = settings.cloudModel;
+  } else {
+    backendChip.textContent = "本地默认";
+    backendChip.className = "chip local";
+  }
+}
+
+// ---------- 健康检查 ----------
+async function checkHealth() {
+  try {
+    const r = await fetch(halguardBase() + '/health', { signal: AbortSignal.timeout(4000) });
     const d = await r.json();
     dot.className = 'ok';
-    statusEl.textContent = `服务正常 · 嵌入器 ${d.embedder} · 模型 ${d.backend_model} · 知识库 ${d.kb_chunks} 块`;
+    statusEl.textContent = `服务正常 · 嵌入器 ${d.embedder} · 知识库 ${d.kb_chunks} 块`
+      + (d.websearch_default ? " · 默认联网" : "");
   } catch (e) {
     dot.className = 'bad';
-    statusEl.textContent = '服务未连接（确认容器已启动）';
+    statusEl.textContent = '服务未连接（确认 HalGuard 已启动）';
   }
 }
 setInterval(checkHealth, 10000);
-checkHealth();
+
+// ---------- Markdown-lite 渲染 ----------
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function renderMarkdown(text) {
+  // 先转义，再做极简 markdown（粗体/行内代码/代码块/链接/列表/标题/换行）
+  let h = escapeHtml(text);
+  h = h.replace(/```([\s\S]*?)```/g, (m, code) => '<code style="display:block;padding:8px;white-space:pre-wrap">' + code.trim() + '</code>');
+  h = h.replace(/`([^`\n]+)`/g, '<code>$1</code>');
+  h = h.replace(/\*\*([^*\n]+)\*\*/g, '<b>$1</b>');
+  h = h.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  const lines = h.split("\n");
+  let out = "", inList = null;
+  const closeList = () => { if (inList) { out += "</" + inList + ">"; inList = null; } };
+  for (const ln of lines) {
+    let m;
+    if ((m = ln.match(/^\s*[-*]\s+(.*)/))) {
+      if (inList !== "ul") { closeList(); out += "<ul>"; inList = "ul"; }
+      out += "<li>" + m[1] + "</li>";
+    } else if ((m = ln.match(/^\s*(\d+)[.、]\s*(.*)/))) {
+      if (inList !== "ol") { closeList(); out += "<ol>"; inList = "ol"; }
+      out += "<li>" + m[2] + "</li>";
+    } else if (/^\s*#{1,4}\s/.test(ln)) {
+      closeList(); out += "<p><b>" + ln.replace(/^\s*#+\s*/, "") + "</b></p>";
+    } else if (ln.trim() === "") {
+      closeList();
+    } else {
+      closeList(); out += "<p>" + ln + "</p>";
+    }
+  }
+  closeList();
+  return out;
+}
+
+// ---------- 消息与面板 ----------
+let history = [];
 
 function riskClass(r) { return r < 0.15 ? 'low' : r < 0.5 ? 'mid' : 'high'; }
 
@@ -137,13 +317,14 @@ function addHgPanel(el, hg) {
   let html = `<div class="row">
     <span class="pill ${riskClass(risk)}">幻觉风险 ${(risk * 100).toFixed(0)}%</span>
     ${hg.action && hg.action !== 'none' ? `<span class="pill act">动作: ${hg.action}</span>` : ''}
+    ${hg.backend ? `<span class="pill act">${hg.backend.kind === 'cloud' ? '☁️' : '🖥'} ${escapeHtml(hg.backend.model || '')}</span>` : ''}
     ${hg.websearch?.enabled ? `<span class="pill act">🌐 联网${hg.websearch.failed ? '（搜索失败）' : `· ${hg.websearch.sources?.length || 0} 条来源`}</span>` : ''}
   </div>`;
   const srcs = hg.websearch?.sources || [];
   if (srcs.length) {
     html += '<div class="claims"><b>🌐 搜索来源：</b><ul>' +
       srcs.slice(0, 5).map((s, i) =>
-        `<li><a href="${escapeHtml(s.url)}" target="_blank" style="color:var(--accent)">[${i + 1}] ${escapeHtml(s.title)}</a>${s.time ? ` <span class="hint">(${escapeHtml(s.time)})</span>` : ''}</li>`
+        `<li><a href="${escapeHtml(s.url)}" target="_blank" rel="noopener" style="color:var(--accent)">[${i + 1}] ${escapeHtml(s.title)}</a>${s.time ? ` <span class="hint">(${escapeHtml(s.time)})</span>` : ''}</li>`
       ).join('') + '</ul></div>';
   }
   const bad = (hg.claims || []).filter(c => c.unsupported);
@@ -156,49 +337,87 @@ function addHgPanel(el, hg) {
   el.appendChild(box);
 }
 
-function escapeHtml(s) {
-  return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
-}
-
 function addMsg(cls, text) {
   const el = document.createElement('div');
   el.className = 'msg ' + cls;
-  el.textContent = text;
+  if (cls === 'bot') el.innerHTML = renderMarkdown(text);
+  else el.textContent = text;
   chat.appendChild(el);
   chat.scrollTop = chat.scrollHeight;
   return el;
 }
 
-async function send() {
-  const q = input.value.trim();
+function addTools(el, rawText) {
+  const tools = document.createElement('div');
+  tools.className = 'msgtools';
+  const copy = document.createElement('button');
+  copy.textContent = '复制';
+  copy.onclick = () => {
+    navigator.clipboard.writeText(rawText).then(() => { copy.textContent = '已复制 ✓'; setTimeout(() => copy.textContent = '复制', 1200); });
+  };
+  const retry = document.createElement('button');
+  retry.textContent = '重新生成';
+  retry.onclick = () => {
+    const lastUser = [...history].reverse().find(m => m.role === 'user');
+    if (!lastUser) return;
+    el.remove();
+    history = history.slice(0, history.lastIndexOf(lastUser) + 1);
+    sendMessage(lastUser.content);
+  };
+  tools.append(copy, retry);
+  el.appendChild(tools);
+}
+
+// ---------- 错误映射 ----------
+function friendlyError(status, body) {
+  let msg = body || "";
+  try { const j = JSON.parse(body); msg = j.error?.message || j.detail || msg; } catch (e) {}
+  if (status === 401 || status === 403) return "API Key 无效或无权限（401/403）：请检查设置中的密钥";
+  if (status === 404) return "接口或模型不存在（404）：检查 Base URL 与模型名";
+  if (status === 429) return "请求被限流（429）：稍后再试或检查账户额度";
+  if (status === 400) return "请求参数错误（400）：" + (msg.slice(0, 160) || "请检查模型名与设置");
+  if (status === 502) return "无法连接上游 API（502）：" + (msg.slice(0, 160) || "检查 Base URL 与网络");
+  return `HTTP ${status}：` + (msg.slice(0, 160) || "未知错误");
+}
+
+// ---------- 发送 ----------
+async function sendMessage(prefill) {
+  const q = (prefill !== undefined ? prefill : input.value).trim();
   if (!q) return;
   input.value = '';
   sendBtn.disabled = true;
   addMsg('user', q);
-  const wsOn = document.getElementById('websearch').checked;
+  const wsOn = $('websearch').checked;
   const botEl = addMsg('bot', wsOn ? '🌐 联网搜索中，随后思考…' : '思考中…');
   history.push({ role: 'user', content: q });
 
-  const base = document.getElementById('baseUrl').value.replace(/\/+$/, '');
-  const model = document.getElementById('model').value;
+  const payload = {
+    model: $('model').value,
+    messages: history,
+    stream: false,
+    max_tokens: wsOn ? 4000 : 1500,
+    websearch: wsOn,
+  };
+  const be = currentBackendPayload();
+  if (be) payload.backend = be;
+
   try {
-    const r = await fetch(base + '/chat/completions', {
+    const r = await fetch(apiBase() + '/chat/completions', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
-      // 联网模式：服务端会保证 max_tokens 下限（4096）并在思考耗尽预算时自动重试；
-      // 客户端预算也给足，避免思考模型（qwen3 等）推理耗尽预算导致正文为空
-      body: JSON.stringify({ model, messages: history, stream: false, max_tokens: wsOn ? 4000 : 1500, websearch: wsOn }),
+      body: JSON.stringify(payload),
     });
-    if (!r.ok) throw new Error('HTTP ' + r.status + ' ' + (await r.text()).slice(0, 200));
+    if (!r.ok) throw new Error(friendlyError(r.status, await r.text()));
     const d = await r.json();
     let content = d.choices?.[0]?.message?.content ?? '(空回答)';
-    // qwen3 思考模型可能返回 <think> 段，剥离展示
-    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim() || '(仅思考，无正文)';
-    botEl.textContent = content;
+    // 思考模型可能返回 <think> 段，剥离展示
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim() || '(仅思考，无正文——请重试或调大 max_tokens)';
+    botEl.innerHTML = renderMarkdown(content);
     addHgPanel(botEl, d.halguard);
+    addTools(botEl, content);
     history.push({ role: 'assistant', content });
   } catch (e) {
-    botEl.textContent = '❌ 请求失败：' + e.message;
+    botEl.textContent = '❌ ' + e.message;
   } finally {
     sendBtn.disabled = false;
     chat.scrollTop = chat.scrollHeight;
@@ -206,10 +425,99 @@ async function send() {
   }
 }
 
-document.getElementById('f').addEventListener('submit', e => { e.preventDefault(); send(); });
+function send() { sendMessage(); }
+
+// ---------- 设置弹窗 ----------
+const mask = $('modalMask');
+function openModal() {
+  $('cloudBase').value = settings.cloudBase;
+  $('cloudKey').value = settings.cloudKey;
+  $('cloudModel').value = settings.cloudModel;
+  document.querySelectorAll('input[name=bk]').forEach(r => { r.checked = (r.value === settings.mode); });
+  syncModalMode();
+  mask.classList.add('show');
+}
+function syncModalMode() {
+  const mode = document.querySelector('input[name=bk]:checked').value;
+  $('radioLocalLabel').classList.toggle('on', mode === 'local');
+  $('radioCloudLabel').classList.toggle('on', mode === 'cloud');
+  $('cloudFields').classList.toggle('show', mode === 'cloud');
+  $('testResult').textContent = '';
+  $('testResult').className = '';
+}
+document.querySelectorAll('input[name=bk]').forEach(r => r.addEventListener('change', syncModalMode));
+
+// 预设按钮
+PRESETS.forEach(p => {
+  const b = document.createElement('button');
+  b.textContent = p.name;
+  b.onclick = () => {
+    document.querySelector('input[name=bk][value=cloud]').checked = true;
+    syncModalMode();
+    $('cloudBase').value = p.base;
+    $('cloudModel').value = p.model;
+  };
+  $('presetRow').appendChild(b);
+});
+
+$('settingsBtn').onclick = openModal;
+$('cancelBtn').onclick = () => mask.classList.remove('show');
+mask.addEventListener('click', e => { if (e.target === mask) mask.classList.remove('show'); });
+
+$('saveBtn').onclick = () => {
+  const mode = document.querySelector('input[name=bk]:checked').value;
+  if (mode === 'cloud') {
+    const base = $('cloudBase').value.trim(), key = $('cloudKey').value.trim(), model = $('cloudModel').value.trim();
+    if (!base || !key || !model) { alert('云端模式需要完整填写 Base URL、API Key 和模型名'); return; }
+    settings = { mode, cloudBase: base, cloudKey: key, cloudModel: model };
+  } else {
+    settings = { mode: 'local', cloudBase: $('cloudBase').value.trim(), cloudKey: $('cloudKey').value.trim(), cloudModel: $('cloudModel').value.trim() };
+  }
+  saveSettings(settings);
+  refreshBackendChip();
+  mask.classList.remove('show');
+};
+
+// 测试连接：经 HalGuard 服务端请求上游 /models
+$('testBtn').onclick = async () => {
+  const res = $('testResult');
+  res.className = ''; res.textContent = '测试中…';
+  const base = $('cloudBase').value.trim(), key = $('cloudKey').value.trim(), model = $('cloudModel').value.trim();
+  if (!base || !key) { res.className = 'bad'; res.textContent = '请先填写 Base URL 与 API Key'; return; }
+  try {
+    const r = await fetch(apiBase() + '/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer local' },
+      body: JSON.stringify({ backend: { base_url: base, api_key: key, model: model || 'test' } }),
+    });
+    const d = await r.json();
+    if (r.ok) {
+      const n = (d.data || []).length;
+      res.className = 'ok';
+      res.textContent = `✅ 连接成功${n ? `，上游返回 ${n} 个模型` : ''}`;
+    } else {
+      res.className = 'bad';
+      res.textContent = '❌ ' + (d.error?.message || ('HTTP ' + r.status));
+    }
+  } catch (e) {
+    res.className = 'bad';
+    res.textContent = '❌ ' + e.message;
+  }
+};
+
+// ---------- 清空对话 ----------
+$('clearBtn').onclick = () => { history = []; chat.innerHTML = ''; };
+
+// ---------- 事件 ----------
+$('f').addEventListener('submit', e => { e.preventDefault(); send(); });
 input.addEventListener('keydown', e => {
   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
 });
+$('baseUrl').addEventListener('change', checkHealth);
+
+// ---------- 初始化 ----------
+refreshBackendChip();
+checkHealth();
 input.focus();
 </script>
 </body>

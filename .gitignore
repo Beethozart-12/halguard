@@ -9,3 +9,7 @@ halguard_models/
 _test_cfg.json
 *.pyc
 .env
+run_serve.py
+_s.log
+_fg.log
+_test_cfg.json
